@@ -1,0 +1,24 @@
+---
+name: parallel-demo
+---
+
+## gather
+action: parallel
+steps:
+  - name: prices
+    action: claudeCli
+    prompt: In one sentence, what is a typical price range for noise-cancelling headphones?
+  - name: reviews
+    action: claudeCli
+    prompt: In one sentence, what do users most commonly complain about in headphone reviews?
+  - name: brands
+    action: claudeCli
+    prompt: Name the top 3 headphone brands in one sentence.
+
+## summarize
+action: claudeCli
+prompt: |
+  Write a short buying guide paragraph using these three facts:
+  - Price range: {{prices}}
+  - Common complaints: {{reviews}}
+  - Top brands: {{brands}}

@@ -1,0 +1,43 @@
+---
+name: subloops-demo
+---
+
+## fetch-names
+action: claudeCli
+prompt: |
+  Return a YAML list of exactly 3 made-up startup names. Reply with only the list, no explanation.
+  Format: ["Name One", "Name Two", "Name Three"]
+
+## log-names
+action: log
+message: "Names to analyze: {{fetch-names}}"
+
+## analyze-each
+action: each
+items: "{{fetch-names}}"
+as: item
+loop: ./analyze-one.loop
+output: score
+continueOnError: true
+
+## inline-each
+action: each
+items: "{{fetch-names}}"
+as: item
+steps:
+  - name: one-liner
+    action: claudeCli
+    prompt: "{{item}} is a made-up startup name. In exactly 5 words, imagine what it might do."
+
+## summarize
+action: sub
+loop: ./hello.loop
+vars:
+  context: "startup analysis complete"
+
+## final
+action: claudeCli
+prompt: |
+  Here are the interestingness scores for 3 startups: {{analyze-each}}
+  And their 5-word descriptions: {{inline-each}}
+  Write a one-sentence verdict on which sounds most promising.

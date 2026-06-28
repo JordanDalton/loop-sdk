@@ -1,0 +1,74 @@
+{
+  "name": "loop-sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Framework for building long-running agentic loops — browser, AI, or both",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./playwright": {
+      "types": "./dist/providers/playwright.d.ts",
+      "default": "./dist/providers/playwright.js"
+    },
+    "./flow": {
+      "types": "./dist/flow.d.ts",
+      "default": "./dist/flow.js"
+    },
+    "./agent": {
+      "types": "./dist/agent.d.ts",
+      "default": "./dist/agent.js"
+    },
+    "./claude-cli": {
+      "types": "./dist/claude-cli.d.ts",
+      "default": "./dist/claude-cli.js"
+    },
+    "./plugins": {
+      "types": "./dist/plugins/retry.d.ts",
+      "default": "./dist/plugins/retry.js"
+    },
+    "./mcp": {
+      "default": "./dist/mcp/server.js"
+    },
+    "./notify": {
+      "types": "./dist/notify.d.ts",
+      "default": "./dist/notify.js"
+    }
+  },
+  "bin": {
+    "loop-mcp": "./dist/mcp/server.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsc --watch",
+    "demo": "node examples/demo.js",
+    "demo:loopfile": "node examples/run-loopfile.js",
+    "mcp": "node dist/mcp/server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@types/js-yaml": "^4.0.9",
+    "ai": "^4.0.0",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "@ai-sdk/anthropic": ">=1.0.0",
+    "@ai-sdk/openai": ">=1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@ai-sdk/anthropic": {
+      "optional": true
+    },
+    "@ai-sdk/openai": {
+      "optional": true
+    }
+  }
+}

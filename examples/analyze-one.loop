@@ -1,0 +1,14 @@
+---
+name: analyze-one
+---
+
+## analyze
+action: claudeCli
+prompt: |
+  In one sentence, describe what kind of company or project "{{item}}" sounds like based on its name alone.
+
+## score
+action: claudeCli
+prompt: |
+  Given this description: "{{analyze}}"
+  Rate its interestingness from 1-10. Reply with just the number.

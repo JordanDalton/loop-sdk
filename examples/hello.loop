@@ -1,0 +1,26 @@
+---
+name: hello-world
+session: mock
+---
+
+## greet
+action: claudeCli
+prompt: Say hello and give one interesting fact about loops in computer science. Keep it under 2 sentences.
+
+## follow-up
+action: claudeCli
+prompt: |
+  You just said: "{{greet}}"
+
+  Now give one practical example of where that concept shows up in real software. One sentence only.
+
+## summarize
+action: claudeCli
+prompt: |
+  Combine these two ideas into a single tweet (under 280 chars, no hashtags):
+  1. {{greet}}
+  2. {{follow-up}}
+
+## log-result
+action: log
+message: "Final tweet: {{summarize}}"
