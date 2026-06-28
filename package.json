@@ -39,11 +39,15 @@
     }
   },
   "bin": {
-    "loop-mcp": "./dist/mcp/server.js"
+    "loop-mcp": "dist/mcp/server.js"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build",
     "dev": "tsc --watch",
     "demo": "node examples/demo.js",
     "demo:loopfile": "node examples/run-loopfile.js",
