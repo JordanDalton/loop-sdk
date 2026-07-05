@@ -42,7 +42,8 @@
     "loop-mcp": "dist/mcp/server.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "skills"
   ],
   "scripts": {
     "build": "tsc",

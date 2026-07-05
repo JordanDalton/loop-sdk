@@ -15,6 +15,19 @@ npm install @ai-sdk/anthropic   # or @ai-sdk/openai, @ai-sdk/google, etc.
 npm test   # builds, then runs the node:test suite in test/
 ```
 
+## Claude Code skill
+
+`skills/loop-sdk/SKILL.md` teaches Claude Code how to author and validate
+`.loop` files idiomatically. Install it into any project:
+
+```bash
+mkdir -p .claude/skills/loop-sdk
+cp node_modules/loop-sdk/skills/loop-sdk/SKILL.md .claude/skills/loop-sdk/
+```
+
+Then ask Claude things like *"write a .loop that checks my mentions and drafts
+replies"* and it produces valid, idiomatic loop files.
+
 ## Quick start
 
 ```js
