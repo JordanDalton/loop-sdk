@@ -9,6 +9,12 @@ npm install loop-sdk
 npm install @ai-sdk/anthropic   # or @ai-sdk/openai, @ai-sdk/google, etc.
 ```
 
+## Test
+
+```bash
+npm test   # builds, then runs the node:test suite in test/
+```
+
 ## Quick start
 
 ```js
@@ -172,6 +178,11 @@ loop.on('step:error',    ({ step, error, attempt }) => { })
 loop.on('step:skip',     ({ step, reason }) => { })   // reason: 'checkpoint' | 'range' | 'error'
 loop.on('step:retry',    ({ step, attempt, delay }) => { })
 loop.on('checkpoint:saved', ({ file, completedSteps }) => { })
+
+loop.on('log',   ({ message }) => { })                 // ctx.log lines, attributed per run
+loop.on('usage', ({ costUsd, inputTokens, outputTokens }) => { })  // claudeCli spend, cumulative per step
+loop.on('agent', ({ kind, text }) => { })              // live claudeCli transcript: text | tool_use | tool_result | error
+loop.on('worktree:created', ({ path, branch, baseRef }) => { })
 ```
 
 **Custom events** — emit from inside a step and listen anywhere:
@@ -425,16 +436,29 @@ No-op on non-macOS platforms.
 ```
 ---
 name: my-loop
-description: Does something useful
+session: browser            # this loop needs a browser session
+browserMode: extension      # 'isolated' (default) | 'chrome' (CDP) | 'extension'
+browserProfile: "{{profile}}"   # which Chrome profile/identity acts ({{vars}} ok)
+model: claude-sonnet-5      # default model for claudeCli/verify steps
+workdir: ~/Code/my-repo     # cwd for claudeCli/verify (a repo makes them build workers)
+worktree: true              # isolate each run's changes in a git worktree + branch
+onSuccess: pr               # runner action after success: keep | merge | pr
+mcp:                        # MCP servers attached to this loop's Claude workers
+  - boards
+reflexion: true             # failed verify retries the prior prompt step once with the critique
+vars:                       # declared inputs and their defaults
+  city: Austin
 ---
 
 ## step-one
-
 action: claudeCli
-prompt: Write a haiku about the ocean.
+prompt: Write a haiku about {{city}}.
+
+## check
+action: verify
+assert: "{{step-one}} is a haiku (5-7-5)"
 
 ## step-two
-
 action: log
 message: Done! Output was {{step-one}}
 ```
@@ -443,15 +467,22 @@ message: Done! Output was {{step-one}}
 
 | Action | Description |
 |--------|-------------|
-| `claudeCli` | Run `claude -p` with `prompt`. |
-| `navigate` | Navigate to `url`. |
-| `screenshot` | Take a screenshot. |
-| `log` | Print `message` to stdout. |
-| `parallel` | Run multiple steps concurrently (nested `steps` list). |
-| `sub` | Run another `.loop` file (`file` path). |
-| `each` | Iterate over `items` (array, context key, or `claudeCli` prompt) and run `steps` or `file` per item. |
+| `claudeCli` | Run `claude -p` with `prompt` (`model`, `maxSteps`, `screenshot`, `workdir`, `mcp` per step). |
+| `codexCli` | Run the OpenAI Codex CLI with `prompt`. |
+| `verify` | AI judge checks `assert`; failure fails the step (and triggers reflexion). |
+| `send` | Push a `message` to the user — `channel: imessage` (with `to`) or `ntfy` (with `topic`). |
+| `navigate` / `click` / `type` / `key` / `scroll` / `screenshot` | Browser actions on the run's session. |
+| `wait` | Pause `ms` milliseconds. |
+| `log` | Emit `message` to the run log. |
+| `set-variable` | Store `value` under `key` (referenceable as `{{key}}` or the step name). |
+| `parallel` | Run nested `steps` concurrently. |
+| `sub` | Run another `.loop` file (`loop` path) sharing context; pass `vars`. |
+| `each` | Iterate `items` (array, `{{ref}}`, or lines) over `steps`/`loop`; `as` names the item var; `concurrency: 1-8` runs items in parallel with isolated state; `continueOnError`. |
+| *custom* | Any action name registered via the `actions` map passed to `loadLoop()` — how runners add steps like `approve` or `card`. |
 
-**`{{step-name}}` interpolation** — reference the output of any previous step by name.
+**`{{name}}` interpolation** — resolves prior step outputs first, then vars (declared inputs, run-time vars, each-item aliases). Unresolved refs warn and keep the literal; use `describeLoop()` to catch them before running.
+
+**Reflexion** — when a `verify` step fails and the step before it is a prompt step, that step is retried once with the judge's critique appended, then re-verified. Opt out with `reflexion: false`.
 
 **Running a `.loop` file:**
 
@@ -459,16 +490,62 @@ message: Done! Output was {{step-one}}
 import { loadLoop, runFile, runFileBackground } from 'loop-sdk'
 
 // Run synchronously (returns run log)
-await runFile('./my-loop.loop', { session: null })
+await runFile('./my-loop.loop', session)
 
 // Run in the background (returns RunHandle)
-const handle = await runFileBackground('./my-loop.loop', { session: null })
+const handle = runFileBackground('./my-loop.loop', session)
 await handle.wait()
 
-// Parse and build a Loop instance manually
-const loop = await loadLoop('./my-loop.loop')
-await loop.run({ session: null })
+// Parse and build a Loop instance manually — with custom actions and a
+// runtime overlay (LoadOptions) for things like test runs
+const loop = loadLoop('./my-loop.loop', {
+  approve: async (ctx, step) => { /* pause for human approval */ },
+}, {
+  maxTurnsCap: 10,    // clamp agentic turns on claudeCli/verify steps
+  skipNotify: true,   // mute the loop's notify config
+})
+await loop.run({ session, vars: { city: 'Denver' } })
 ```
+
+Front-matter `vars:` are applied as input defaults by the engine (`Loop.defaults()`), so declared inputs work even when the host passes nothing; provided vars win.
+
+---
+
+## describeLoop()
+
+Static analysis for runners — everything you need to know **before** executing:
+
+```js
+import { describeLoop } from 'loop-sdk'
+
+const desc = describeLoop(content, deps /* optional: { 'child.loop': contents } */)
+// {
+//   name, needsBrowser, browserMode: 'launch'|'cdp'|'extension',
+//   browserProfile, cdpUrl, mcp,
+//   inputs: { city: 'Austin' },          // declared defaults
+//   stepNames: [...],
+//   referencedVars: ['post-url'],        // {{refs}} with NO local source —
+//                                        // supply them at run time or refuse
+//   reachableDeps: ['child.loop'],       // transitive sub/each references
+// }
+```
+
+Browser requirements propagate only through deps the entry loop actually
+references — an unrelated browser loop in the dep map doesn't force a browser.
+Use `referencedVars` for pre-flight validation: refuse the run with a clear
+message instead of letting literal `{{braces}}` leak into navigation and prompts.
+
+---
+
+## Worktrees & MCP registry
+
+- `worktree: true` + `workdir` — each run's file changes land in an isolated
+  git worktree on branch `loop/<name>-<id>` (`ensureWorktree`); parallel runs
+  against one repo never collide. The runner decides what happens to the
+  branch afterward (`onSuccess: keep | merge | pr`).
+- `mcp:` — names are resolved from `~/.loopdeloop/mcp.json` (Claude Code
+  `mcpServers` format) at step runtime via `resolveMcpServers()`; inline
+  definitions also work. Step-level `mcp:` overrides the loop's.
 
 ---
 
