@@ -1,6 +1,14 @@
 # loop-sdk
 
-Framework for building long-running agentic loops. Steps can be browser actions, AI agent calls, data operations, or anything else — composed into named, resumable sequences with structured logging, checkpointing, events, and a plugin system.
+**A loop engineering framework for building long-running agentic loops.** Steps can be browser actions, AI agent calls, data operations, or anything else — composed into named, resumable sequences with structured logging, checkpointing, events, tool-permission enforcement, and a plugin system.
+
+## What is loop engineering?
+
+**Loop engineering** is the practice of building reliable, long-running agentic loops — turning a one-shot AI call into a repeatable, observable, governable process. Where *prompt engineering* shapes a single model response, loop engineering shapes the **control flow around many model calls**: how steps are ordered, how their outputs are verified, how failures retry, how a run resumes after a crash, and how much authority each step is granted.
+
+`loop-sdk` is a loop engineering framework that gives each of those concerns a first-class primitive — steps, context, checkpoints, events, `verify`/`expect` gates, tool allowlists, and git-worktree isolation — so AI agents, browser automation, and data pipelines compose into **durable workflows instead of brittle scripts**. The engine owns the control flow deterministically; the model is invoked only at the steps that need it, and each step's output and tool access can be constrained in code.
+
+**Related concepts:** agentic loops, agent orchestration, AI workflow automation, durable / resumable agent workflows, multi-agent pipelines, AI agent frameworks, and the "software factory" pattern for autonomous code generation.
 
 ## Install
 
@@ -52,6 +60,8 @@ await loop.run({ session: null })
 ---
 
 ## Concepts
+
+These are the building blocks of loop engineering with this SDK — the primitives you compose into durable agentic workflows.
 
 ### Loop
 
@@ -504,7 +514,7 @@ message: Done! Output was {{step-one}}
 
 **Reflexion** — when a `verify` step fails and the step before it is a prompt step, that step is retried once with the judge's critique appended, then re-verified. Opt out with `reflexion: false`.
 
-**Enforcement (`mode` / `tools` / `expect`)** — how you turn "follow the steps" from best-effort into a guarantee. The control flow already lives in the engine (not the model); these three knobs constrain what each worker step may *do* and *return*:
+**Enforcement (`mode` / `tools` / `expect`)** — the loop engineering primitives for making a run *governable*: how you turn "follow the steps" from best-effort into a guarantee. The control flow already lives in the engine (not the model); these three knobs constrain what each worker step may *do* and *return*:
 
 - **`mode`** — `explore` (default) runs workers frictionless: permissions are skipped unless a step declares its own `tools:`. `strict` scopes every worker step to an allowlist and denies unlisted tools. When `mode` is unset it **auto-escalates to `strict`** for loops that ship hard-to-reverse changes (`worktree`, or `onSuccess: merge|pr`) — set it explicitly to override. The default path is unchanged from prior versions.
 - **`tools`** — a tool allowlist (Claude Code names, e.g. `[Read, Edit, Bash]`) at the loop level or per step. **Declaring an allowlist enforces it regardless of `mode`** — if you list tools, unlisted ones are denied. A live browser session automatically keeps its `mcp__browser` tools.
