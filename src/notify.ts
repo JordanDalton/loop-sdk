@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process'
+import { spawnSync, spawn } from 'node:child_process'
 import type { Loop } from './loop.js'
 import type { LoopEvents } from './events.js'
 
@@ -29,6 +29,41 @@ export function notify(message: string, opts: NotifyOptions = {}): void {
   if (sound) script += ` sound name "default"`
 
   spawnSync('osascript', ['-e', script], { stdio: 'ignore' })
+}
+
+/**
+ * Send an iMessage via the macOS Messages app. Sending to your own phone
+ * number or Apple ID lands in the "message to self" thread on all devices.
+ * First use prompts the user to grant Automation permission for Messages.
+ * No-op on non-macOS platforms.
+ */
+export function sendIMessage(message: string, to: string): Promise<void> {
+  if (process.platform !== 'darwin') return Promise.reject(new Error('iMessage requires macOS'))
+  if (!to?.trim()) return Promise.reject(new Error('iMessage requires a "to" (your phone number or Apple ID email)'))
+
+  const script = `tell application "Messages"
+  set targetService to 1st account whose service type = iMessage
+  set targetBuddy to participant ${osa(to.trim())} of targetService
+  send ${osa(message)} to targetBuddy
+end tell`
+
+  // Async with a hard timeout — a pending macOS permission dialog must never
+  // block the runner's event loop (it froze the whole sidecar once)
+  return new Promise((resolve, reject) => {
+    const proc = spawn('osascript', ['-e', script])
+    let stderr = ''
+    proc.stderr?.on('data', d => { stderr += d.toString() })
+    const timer = setTimeout(() => {
+      proc.kill()
+      reject(new Error('iMessage send timed out — is a macOS permission dialog waiting? Approve "control Messages" and retry'))
+    }, 60_000)
+    proc.on('error', err => { clearTimeout(timer); reject(err) })
+    proc.on('close', code => {
+      clearTimeout(timer)
+      if (code === 0) resolve()
+      else reject(new Error(`iMessage send failed: ${stderr.trim() || `exit ${code}`}`))
+    })
+  })
 }
 
 // ── Pre-wired listener sets ───────────────────────────────────────────────────

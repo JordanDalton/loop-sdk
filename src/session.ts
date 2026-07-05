@@ -46,6 +46,15 @@ export abstract class Session {
   /** Release all resources held by this session. */
   abstract destroy(): Promise<void>
 
+  // ── Optional — providers implement for parallel lanes ────────────────────────
+
+  /**
+   * Create an independent sibling session (e.g. its own browser tab) for a
+   * parallel lane. Lanes are destroyed by the runner when their item finishes.
+   * When absent, parallel lanes share this session.
+   */
+  clone?(laneId: string): Promise<Session>
+
   // ── Optional — providers implement for AI agent tool access ──────────────────
 
   /**

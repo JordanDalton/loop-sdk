@@ -1,8 +1,8 @@
 {
   "name": "loop-sdk",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "type": "module",
-  "description": "Framework for building long-running agentic loops — browser, AI, or both",
+  "description": "Framework for building long-running agentic loops \u2014 browser, AI, or both",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -51,7 +51,8 @@
     "dev": "tsc --watch",
     "demo": "node examples/demo.js",
     "demo:loopfile": "node examples/run-loopfile.js",
-    "mcp": "node dist/mcp/server.js"
+    "mcp": "node dist/mcp/server.js",
+    "test": "npm run build && node --test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

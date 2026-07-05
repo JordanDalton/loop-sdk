@@ -106,15 +106,32 @@ export class Context {
     const extra = data ? ` ${JSON.stringify(data)}` : ''
     process.stdout.write(`  ${msg}${extra}\n`)
     this._logger?.write({ msg, data })
+    this.emitLine(`${msg}${extra}`)
+  }
+
+  /**
+   * Emit a human-readable line as a 'log' event on the run's root emitter
+   * (fire-and-forget). Runners subscribe to this instead of scraping stdout —
+   * the emitter is shared through fork(), so sub-loop lines attribute to the
+   * run that owns them even with many runs in flight.
+   */
+  emitLine(message: string): void {
+    void this._emitter?.emit('log', { message })
   }
 
   // ── forking ──────────────────────────────────────────────────────────────────
 
-  fork(vars: Record<string, unknown> = {}, session: Session | null = null): Context {
+  fork(
+    vars: Record<string, unknown> = {},
+    session: Session | null = null,
+    opts: { isolateState?: boolean } = {}
+  ): Context {
     return new Context({
       session: session ?? this.session,
       vars: { ...this.vars, ...vars },
-      state: this._state,
+      // Isolated forks copy the state so concurrent children can't trample
+      // each other's step outputs (used by parallel `each`).
+      state: opts.isolateState ? new Map(this._state) : this._state,
       logger: this._logger,
       checkpointFile: this._checkpointFile,
       emitter: this._emitter,

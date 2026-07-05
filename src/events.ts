@@ -87,6 +87,47 @@ export interface CheckpointSavedEvent {
   totalSteps: number
 }
 
+/** A human-readable log line from the run (ctx.log + loop progress lines). */
+export interface LogEvent {
+  message: string
+}
+
+/** Cost/token usage for one CLI agent invocation (claudeCli/verify step). */
+export interface UsageEvent {
+  costUsd: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  model?: string
+  numTurns?: number
+}
+
+/** A live transcript entry from a streaming CLI agent step. */
+export interface AgentActivityEvent {
+  kind: 'init' | 'text' | 'tool_use' | 'tool_result'
+  /** Assistant text (kind: text). */
+  text?: string
+  /** Tool name (kind: tool_use). */
+  tool?: string
+  /** Compact summary — tool input, result preview, or model name. */
+  detail?: string
+  /** Tool result reported an error (kind: tool_result). */
+  isError?: boolean
+}
+
+/** A git worktree was created to isolate this run's file changes. */
+export interface WorktreeCreatedEvent {
+  /** Toplevel of the source repository. */
+  repo: string
+  /** Path of the new worktree (the run's effective workdir). */
+  path: string
+  /** Branch created for this run. */
+  branch: string
+  /** Commit the branch was cut from. */
+  baseRef: string
+}
+
 /** Map of all built-in event names → their payload types. */
 export interface LoopEvents {
   'loop:start':          LoopStartEvent
@@ -97,6 +138,10 @@ export interface LoopEvents {
   'step:skip':           StepSkipEvent
   'step:retry':          StepRetryEvent
   'checkpoint:saved':    CheckpointSavedEvent
+  'log':                 LogEvent
+  'usage':               UsageEvent
+  'agent':               AgentActivityEvent
+  'worktree:created':    WorktreeCreatedEvent
 }
 
 // ── Emitter ───────────────────────────────────────────────────────────────────

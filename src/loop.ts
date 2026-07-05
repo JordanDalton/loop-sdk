@@ -157,12 +157,23 @@ export class Loop {
   private readonly _steps: Array<{ name: string; fn: StepFn; opts: StepOptions }>
   private readonly _plugins: Plugin[]
   private readonly _emitter: Emitter
+  private _defaultVars: Record<string, unknown> = {}
 
   constructor(name: string) {
     this.name = name
     this._steps = []
     this._plugins = []
     this._emitter = new Emitter()
+  }
+
+  /**
+   * Default vars merged UNDER run-time vars — loadLoop() seeds these from the
+   * .loop front-matter `vars:` block, so declared input defaults apply even
+   * when the host passes nothing.
+   */
+  defaults(vars: Record<string, unknown>): this {
+    this._defaultVars = { ...this._defaultVars, ...vars }
+    return this
   }
 
   step(name: string, fn: StepFn, opts: StepOptions = {}): this {
@@ -249,11 +260,13 @@ export class Loop {
         try {
           await fn(ctx)
           console.log('ok')
+          ctx.emitLine(`[${i + 1}/${this._steps.length}] ${name} ... ok`)
           stepsCompleted++
           await this._emitter.emit('step:complete', { loop: this.name, step: name, index: i, durationMs: Date.now() - startMs })
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err))
           console.log(`ERROR: ${error.message}`)
+          ctx.emitLine(`[${i + 1}/${this._steps.length}] ${name} ... ERROR: ${error.message}`)
           await this._emitter.emit('step:error', { loop: this.name, step: name, index: i, error, durationMs: Date.now() - startMs })
           const recovered = await this._runErrorHooks(error, { name, index: i }, ctx)
           if (recovered) { i--; continue }
@@ -283,7 +296,11 @@ export class Loop {
     signal = null,
   }: RunOptions): Promise<RunLog> {
     const logger = new Logger(logDir, this.name, session.id)
-    const ctx = new Context({ session, vars, logger, checkpointFile, emitter: this._emitter, signal })
+    const ctx = new Context({
+      session,
+      vars: { ...this._defaultVars, ...vars },
+      logger, checkpointFile, emitter: this._emitter, signal,
+    })
 
     ctx._loopName = this.name
     ctx._checkpointFile = checkpointFile
@@ -300,13 +317,19 @@ export class Loop {
       ctx._lastCompletedIndex = checkpoint.lastCompletedIndex
       console.log(`\nResuming: ${this.name} (from step ${resumeIndex + 2} of ${this._steps.length})`)
       console.log(`Restored: ${Object.keys(checkpoint.state).length} state keys from ${resumeFrom}`)
+      ctx.emitLine(`Resuming: ${this.name} (from step ${resumeIndex + 2} of ${this._steps.length})`)
+      ctx.emitLine(`Restored: ${Object.keys(checkpoint.state).length} state keys`)
     } else {
       console.log(`\nLoop:    ${this.name}`)
+      ctx.emitLine(`Loop:    ${this.name}`)
     }
 
     console.log(`Session: ${session.id}`)
     console.log(`Steps:   ${this._steps.length}`)
     console.log('---')
+    ctx.emitLine(`Session: ${session.id}`)
+    ctx.emitLine(`Steps:   ${this._steps.length}`)
+    ctx.emitLine('---')
 
     const loopStartMs = Date.now()
     const runLog: RunLog = {
@@ -332,6 +355,7 @@ export class Loop {
       // Skip steps already completed in a prior run
       if (i <= resumeIndex) {
         console.log(`[${i + 1}/${this._steps.length}] ${name} ... skipped (completed in prior run)`)
+        ctx.emitLine(`[${i + 1}/${this._steps.length}] ${name} ... skipped (completed in prior run)`)
         await this._emitter.emit('step:skip', { loop: this.name, step: name, index: i, reason: 'checkpoint' })
         runLog.steps.push({ name, status: 'skipped' })
         continue
@@ -340,12 +364,14 @@ export class Loop {
       // Check for cancellation before starting each step
       if (signal?.aborted) {
         console.log(`[${i + 1}/${this._steps.length}] ${name} ... cancelled`)
+        ctx.emitLine(`[${i + 1}/${this._steps.length}] ${name} ... cancelled`)
         runLog.status = 'cancelled'
         break
       }
 
       if (startAt != null && i + 1 < startAt) {
         console.log(`[${i + 1}/${this._steps.length}] ${name} ... skipped`)
+        ctx.emitLine(`[${i + 1}/${this._steps.length}] ${name} ... skipped`)
         await this._emitter.emit('step:skip', { loop: this.name, step: name, index: i, reason: 'range' })
         continue
       }
@@ -373,6 +399,7 @@ export class Loop {
           const wait = computeDelay(attempt, opts.retryDelay ?? 0, opts.retryBackoff ?? 'flat')
           const label = `attempt ${attempt + 2}/${(opts.retries ?? 0) + 1}`
           process.stdout.write(wait > 0 ? `\n  retrying in ${wait}ms (${label}) ... ` : `\n  retrying (${label}) ... `)
+          ctx.emitLine(wait > 0 ? `retrying in ${wait}ms (${label}) ...` : `retrying (${label}) ...`)
           if (wait > 0) await sleep(wait)
           await this._emitter.emit('step:retry', { loop: this.name, step: name, index: i, plugin: 'step.retries' })
           try {
@@ -398,6 +425,7 @@ export class Loop {
           await opts.onError(lastErr!, ctx)
           stepSucceeded = true
           console.log('ok (fallback)')
+          ctx.emitLine(`[${i + 1}/${this._steps.length}] ${name} ... ok (fallback)`)
           const durationMs = Date.now() - stepStartMs
           logger.stepDone('fallback')
           runLog.steps.push({ name, status: 'recovered', error: lastErr!.message })
@@ -405,12 +433,14 @@ export class Loop {
         } catch (fallbackErr) {
           lastErr = fallbackErr instanceof Error ? fallbackErr : new Error(String(fallbackErr))
           console.log(`ERROR in fallback: ${lastErr.message}`)
+          ctx.emitLine(`ERROR in fallback: ${lastErr.message}`)
         }
       }
 
       // ── skipOnError ──────────────────────────────────────────────────────
       if (!stepSucceeded && opts.skipOnError) {
         console.log(`skipped (${lastErr!.message})`)
+        ctx.emitLine(`[${i + 1}/${this._steps.length}] ${name} ... skipped (${lastErr!.message})`)
         await this._emitter.emit('step:skip', { loop: this.name, step: name, index: i, reason: 'error' })
         runLog.steps.push({ name, status: 'skipped', error: lastErr!.message })
         continue
@@ -420,6 +450,7 @@ export class Loop {
       if (stepSucceeded && !runLog.steps.find(s => s.name === name)) {
         const durationMs = Date.now() - stepStartMs
         console.log('ok')
+        ctx.emitLine(`[${i + 1}/${this._steps.length}] ${name} ... ok`)
         logger.stepDone()
         runLog.steps.push({ name, status: 'ok' })
         await this._emitter.emit('step:complete', { loop: this.name, step: name, index: i, durationMs })
@@ -437,6 +468,7 @@ export class Loop {
           })
           const count = ctx._completedSteps.length
           console.log(`  ✓ checkpoint saved (${count}/${this._steps.length} steps) → ${checkpointFile}`)
+          ctx.emitLine(`✓ checkpoint saved (${count}/${this._steps.length} steps)`)
           await this._emitter.emit('checkpoint:saved', {
             loop: this.name,
             file: checkpointFile,
@@ -451,6 +483,7 @@ export class Loop {
       if (!stepSucceeded) {
         const durationMs = Date.now() - stepStartMs
         console.log(`ERROR: ${lastErr!.message}`)
+        ctx.emitLine(`[${i + 1}/${this._steps.length}] ${name} ... ERROR: ${lastErr!.message}`)
         await this._emitter.emit('step:error', { loop: this.name, step: name, index: i, error: lastErr!, durationMs })
         logger.stepError(lastErr!)
         runLog.steps.push({ name, status: 'error', error: lastErr!.message })
@@ -486,6 +519,9 @@ export class Loop {
     console.log('---')
     console.log(`Loop ${runLog.status}.`)
     if (logger.logFile) console.log(`Log: ${logger.logFile}`)
+    ctx.emitLine('---')
+    ctx.emitLine(`Loop ${runLog.status}.`)
+    if (logger.logFile) ctx.emitLine(`Log: ${logger.logFile}`)
 
     return runLog
   }
