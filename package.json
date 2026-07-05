@@ -1,6 +1,6 @@
 {
   "name": "loop-sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Loop engineering framework for building durable, long-running agentic loops \u2014 browser, AI, or both",
   "keywords": [
@@ -55,6 +55,7 @@
     }
   },
   "bin": {
+    "loop-sdk": "dist/cli.js",
     "loop-mcp": "dist/mcp/server.js"
   },
   "files": [

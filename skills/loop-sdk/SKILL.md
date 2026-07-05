@@ -88,6 +88,11 @@ the target runner is known to support them.
 ## Validating and running
 
 ```bash
+# Run a browserless loop for real (built-in no-op session; claudeCli steps
+# need `claude` on PATH). Browser loops need the JS API with a real Session.
+npx loop-sdk run path/to/file.loop
+npx loop-sdk run path/to/file.loop --var topic=AI --json
+
 # Quick smoke test with a mock browser (steps log instead of acting):
 node examples/run-loopfile.js path/to/file.loop     # from the loop-sdk repo
 ```

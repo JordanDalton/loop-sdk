@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import {
   parseLoopFile, describeLoop, loadLoop, Session,
   buildPermissionArgs, STRICT_DEFAULT_TOOLS, resolveMode,
@@ -286,6 +288,75 @@ expect:
   contains: world
 `)).run({ session: new NullSession('c4') })
   assert.equal(fail.status, 'failed')
+})
+
+// ── CLI: `loop-sdk run <file>` ─────────────────────────────────────────
+
+const CLI = fileURLToPath(new URL('../dist/cli.js', import.meta.url))
+
+test('cli: runs a browserless loop and exits 0', () => {
+  const file = writeLoop(`---
+name: cli-test
+---
+
+## g
+action: set-variable
+key: k
+value: ok
+
+## show
+action: log
+message: "val {{k}}"
+`)
+  const r = spawnSync('node', [CLI, 'run', file], { encoding: 'utf8' })
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stdout, /val ok/)
+})
+
+test('cli: refuses a browser loop with a clear message', () => {
+  const file = writeLoop(`---
+name: b
+session: browser
+---
+
+## open
+action: navigate
+url: https://example.com
+`)
+  const r = spawnSync('node', [CLI, 'run', file], { encoding: 'utf8' })
+  assert.equal(r.status, 1)
+  assert.match(r.stderr, /session: browser/)
+})
+
+test('cli: --json emits a parseable run log to stdout', () => {
+  const file = writeLoop(`---
+name: j
+---
+
+## g
+action: set-variable
+key: k
+value: yo
+`)
+  const r = spawnSync('node', [CLI, 'run', file, '--json'], { encoding: 'utf8' })
+  assert.equal(r.status, 0, r.stderr)
+  const log = JSON.parse(r.stdout)
+  assert.equal(log.status, 'completed')
+  assert.deepEqual(log.steps.map((s) => s.name), ['g'])
+})
+
+test('cli: fails fast when a referenced var has no source', () => {
+  const file = writeLoop(`---
+name: nv
+---
+
+## show
+action: log
+message: "hi {{topic}}"
+`)
+  const r = spawnSync('node', [CLI, 'run', file], { encoding: 'utf8' })
+  assert.equal(r.status, 1)
+  assert.match(r.stderr, /topic/)
 })
 
 test('run: checkpoint state round-trips step outputs', async () => {

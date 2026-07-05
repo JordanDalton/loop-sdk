@@ -4,7 +4,7 @@ export type { Plugin, StepOptions, RunOptions, RunLog, RunHandle, HandleStatus, 
 export { RetryPlugin } from './plugins/retry.js'
 export type { RetryPluginOptions } from './plugins/retry.js'
 
-export { Session } from './session.js'
+export { Session, NullSession } from './session.js'
 export type { ClickOptions, ScrollOptions } from './session.js'
 
 export { Context } from './context.js'

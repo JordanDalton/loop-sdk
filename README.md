@@ -528,10 +528,29 @@ tools: [Read]          # this step may only read files
 expect: json           # hard-fails unless the output parses as JSON
 ```
 
-**Running a `.loop` file:**
+**Running a `.loop` file — the CLI:**
+
+The fastest way to run a browserless loop (claudeCli / codexCli / verify / data steps):
+
+```bash
+npx loop-sdk run research.loop
+npx loop-sdk run reply.loop --var topic=AI --var tone=casual
+npx loop-sdk run research.loop --json    # print the run log as JSON to stdout
+```
+
+The CLI runs the loop with a built-in no-op session, streams step progress, and
+exits non-zero if the run fails. `claudeCli` steps require the `claude` CLI on
+PATH. Loops that declare `session: browser` need a browser provider — run those
+via the JS API below with your own `Session`.
+
+**Running a `.loop` file — the JS API:**
 
 ```js
-import { loadLoop, runFile, runFileBackground } from 'loop-sdk'
+import { loadLoop, runFile, runFileBackground, NullSession } from 'loop-sdk'
+
+// Browserless loops use the built-in no-op session; browser loops pass a
+// provider like PlaywrightSession (or your own Session) instead.
+const session = new NullSession('run')
 
 // Run synchronously (returns run log)
 await runFile('./my-loop.loop', session)

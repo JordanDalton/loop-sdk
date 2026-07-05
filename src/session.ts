@@ -65,3 +65,21 @@ export abstract class Session {
     return null
   }
 }
+
+/**
+ * NullSession — a no-op session for loops that don't drive a browser
+ * (pure AI / data loops). Every browser method does nothing and screenshot
+ * returns empty bytes, so `runFile()` and the `loop-sdk run` CLI can execute
+ * browserless loops without a real provider.
+ */
+export class NullSession extends Session {
+  async navigate(): Promise<void> {}
+  async click(): Promise<void> {}
+  async type(): Promise<void> {}
+  async key(): Promise<void> {}
+  async scroll(): Promise<void> {}
+  async screenshot(): Promise<Buffer> {
+    return Buffer.alloc(0)
+  }
+  async destroy(): Promise<void> {}
+}
