@@ -36,6 +36,8 @@ message: "{{gather}}"
 | `name` | Required. |
 | `vars:` | Declared inputs with defaults — applied by the engine; run-time vars override. |
 | `model` | Default model for claudeCli/verify steps. |
+| `mode` | `explore` (default) \| `strict`. Explore runs workers frictionless (permissions skipped) unless a step declares `tools:`. Strict scopes every worker step to an allowlist and denies unlisted tools. Auto-escalates to `strict` when unset and the loop ships hard-to-reverse changes (`worktree`, `onSuccess: merge\|pr`); set explicitly to override. |
+| `tools` | Default tool allowlist for claudeCli/verify steps (Claude Code names, e.g. `[Read, Grep, Bash]`). A step's own `tools:` overrides. Declaring any allowlist enforces it regardless of `mode`. |
 | `session: browser` | This loop drives a browser. Omit for pure AI/data loops. |
 | `browserMode` | `isolated` (fresh Chrome, default) \| `chrome` (CDP attach) \| `extension` (the user's running Chrome via the LoopDeLoop extension). |
 | `browserProfile` | Which Chrome profile/identity acts. May be a `{{var}}` so one loop serves several accounts. |
@@ -50,9 +52,11 @@ message: "{{gather}}"
 
 | Action | Key fields | Notes |
 |---|---|---|
-| `claudeCli` | `prompt`, `model`, `maxSteps`, `screenshot`, `workdir`, `mcp` | Spawns `claude -p`. Output = the step's `{{ref}}`. |
-| `codexCli` | `prompt`, `model` | OpenAI Codex CLI. |
+| `claudeCli` | `prompt`, `model`, `maxSteps`, `screenshot`, `workdir`, `mcp`, `tools`, `expect` | Spawns `claude -p`. Output = the step's `{{ref}}`. `tools:` scopes it to an allowlist; `expect:` gates its output. |
+| `codexCli` | `prompt`, `model`, `expect` | OpenAI Codex CLI. |
 | `verify` | `assert` | AI judge; failure fails the step. Put one after any step whose output matters. |
+
+**`expect:`** — a deterministic output contract enforced in code after ANY step (not just claudeCli) runs. `json` (parseable) \| `non-empty`, or an object `{ json, nonEmpty, contains, matches }` (all declared checks must hold). Fails the step if it doesn't. Prefer this over a `verify` AI-judge whenever the check is mechanical — it's a true guarantee, not a probabilistic one.
 | `send` | `message`, `channel: imessage\|ntfy`, `to`/`topic` | Push to the user's phone. |
 | `navigate` | `url` | Browser. Also `click` (`selector`/`text`/`x`+`y`), `type` (`text`), `key`, `scroll` (`deltaY`), `screenshot`, `wait` (`ms`). |
 | `log` | `message` | Emit to the run log. |
@@ -94,6 +98,7 @@ import { describeLoop, loadLoop, runFile } from 'loop-sdk'
 // Static check BEFORE running: what does this loop need?
 const d = describeLoop(content, depsMap)
 d.needsBrowser        // true if this loop or a REACHABLE sub-loop declares session: browser
+d.mode                // effective posture: 'explore' | 'strict' (incl. auto-escalation)
 d.referencedVars      // {{refs}} with no local source — must be supplied or the run should be refused
 d.reachableDeps       // sub/each loop files actually referenced
 
@@ -112,6 +117,11 @@ const loop = loadLoop('./file.loop', { approve: async (ctx, step) => {} },
   steps consume `{{refs}}`.
 - Add a `verify` step after any step whose failure should stop the pipeline —
   reflexion then gives the prior step one self-correction attempt for free.
+- Gate mechanical checks with `expect:` (deterministic, a true guarantee) and
+  reserve `verify` for judgment calls that genuinely need an AI judge.
+- Leave `mode` unset for exploration; the engine auto-escalates to `strict` for
+  loops that merge/PR or use a worktree. For an unattended factory loop, set
+  `mode: strict` and give each worker step a tight `tools:` allowlist.
 - Put human gates (runner `approve` action) before irreversible side effects
   (posting, sending, merging).
 - Capabilities belong in tools, not shell commands: if a prompt needs `curl`,

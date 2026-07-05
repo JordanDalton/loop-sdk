@@ -19,7 +19,7 @@ export type { Item, EachOptions } from './flow.js'
 export { agent } from './agent.js'
 export type { AgentOptions, AgentResult } from './agent.js'
 
-export { claudeCli } from './claude-cli.js'
+export { claudeCli, buildPermissionArgs, STRICT_DEFAULT_TOOLS } from './claude-cli.js'
 export type { ClaudeCliOptions, ClaudeCliResult } from './claude-cli.js'
 
 export { codexCli } from './codex-cli.js'
@@ -28,8 +28,8 @@ export type { CodexCliOptions, CodexCliResult } from './codex-cli.js'
 export { checkpointExists, deleteCheckpoint } from './checkpoint.js'
 export type { Checkpoint } from './checkpoint.js'
 
-export { loadLoop, loadLoopFile, parseLoopFile, runFile, runFileBackground } from './loopfile.js'
-export type { LoopFileMeta, LoopFileStep, LoopFileSchema, ActionRegistry, LoadOptions } from './loopfile.js'
+export { loadLoop, loadLoopFile, parseLoopFile, runFile, runFileBackground, resolveMode, validateOutput } from './loopfile.js'
+export type { LoopFileMeta, LoopFileStep, LoopFileSchema, ActionRegistry, LoadOptions, ExpectContract } from './loopfile.js'
 
 export { describeLoop, describeSchema } from './describe.js'
 export type { LoopDescription } from './describe.js'

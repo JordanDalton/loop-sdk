@@ -9,8 +9,16 @@ export interface ClaudeCliOptions {
   model?: string
   /** Attach a screenshot of the current browser state before invoking claude. */
   screenshot?: boolean
-  /** Restrict the AI to specific MCP tool names. */
+  /** Restrict the AI to these tool names (Claude Code names, e.g. Read, Bash, mcp__browser). */
   tools?: string[]
+  /**
+   * Enforce the tool allowlist. When true, permissions are NOT skipped and the
+   * subprocess is scoped to `tools` (or a conservative default) — any unlisted
+   * tool is denied. When false (default), the step runs frictionless with
+   * permissions skipped UNLESS `tools` is explicitly declared. See
+   * buildPermissionArgs for the full policy.
+   */
+  enforce?: boolean
   /** Cap on agentic turns (tool-use cycles), passed as --max-turns. */
   maxTurns?: number
   /**
@@ -38,6 +46,34 @@ export interface ClaudeCliResult {
 }
 
 /**
+ * Conservative allowlist for an enforced step that declared no `tools` of its
+ * own — enough for a build worker (read/edit/run/search/web) without leaving
+ * the door wide open. Authors narrow it with a step-level `tools:`.
+ */
+export const STRICT_DEFAULT_TOOLS = ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'WebFetch', 'WebSearch']
+
+/**
+ * Translate a step's tool policy into Claude Code permission flags.
+ *
+ *   no allowlist, not enforced (explore default) → --dangerously-skip-permissions
+ *   any declared allowlist                       → enforce it (unlisted tools denied)
+ *   enforced (strict) with no declared allowlist → enforce STRICT_DEFAULT_TOOLS
+ *
+ * Declaring `tools` always enforces, regardless of mode — if you list tools you
+ * mean them. A live browser session always adds the browser MCP server so
+ * enforced browser steps keep working. In `-p` mode a non-allowed tool call
+ * can't be prompted for, so it is denied outright — that's the enforcement.
+ */
+export function buildPermissionArgs(tools: string[], enforce: boolean, hasSession: boolean): string[] {
+  const declared = tools.length ? tools : (enforce ? STRICT_DEFAULT_TOOLS : [])
+  if (declared.length === 0) return ['--dangerously-skip-permissions']
+  const allow = [...declared]
+  if (hasSession) allow.push('mcp__browser')
+  // Comma-joined single value — unambiguous vs. a variadic flag swallowing args
+  return ['--allowedTools', allow.join(',')]
+}
+
+/**
  * claudeCli — spawn `claude -p` as a loop step.
  *
  * Unlike agent(), which calls a provider directly, claudeCli() delegates the
@@ -60,6 +96,7 @@ export async function claudeCli(
     model,
     screenshot = false,
     tools = [],
+    enforce = false,
     maxTurns,
     cwd,
     timeout = 240_000,
@@ -102,7 +139,6 @@ Use "failed" if you could not complete the task.`
   // of assistant text/tool calls plus cost+token usage in the result event.
   const args: string[] = [
     '-p', finalPrompt,
-    '--dangerously-skip-permissions',
     '--setting-sources', 'project',
     '--strict-mcp-config',
     '--output-format', 'stream-json',
@@ -110,8 +146,13 @@ Use "failed" if you could not complete the task.`
   ]
 
   if (model) args.push('--model', model)
-  if (tools.length) args.push('--allowedTools', ...tools)
   if (maxTurns) args.push('--max-turns', String(maxTurns))
+
+  // Permission posture: skip-permissions for a frictionless default, or a real
+  // enforced allowlist when the step opts in (strict mode / declared tools).
+  const permArgs = buildPermissionArgs(tools, enforce, Boolean(ctx.session?.mcpUrl))
+  if (permArgs[0] === '--allowedTools') ctx.log(`🔒 tool scope: ${permArgs[1]}`)
+  args.push(...permArgs)
 
   const servers: Record<string, unknown> = { ...(mcpServers ?? {}) }
   if (ctx.session?.mcpUrl) {

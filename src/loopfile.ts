@@ -14,6 +14,25 @@ import type { RunOptions, RunLog, RunHandle } from './loop.js'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
+/**
+ * A deterministic output contract for a step. Either a shorthand keyword or an
+ * object combining checks (all declared checks must pass).
+ */
+export type ExpectContract =
+  | 'json'
+  | 'non-empty'
+  | 'nonempty'
+  | {
+      /** Output must parse as JSON. */
+      json?: boolean
+      /** Output (trimmed) must be non-empty. */
+      nonEmpty?: boolean
+      /** Output must contain this substring. */
+      contains?: string
+      /** Output must match this regular expression (JS syntax). */
+      matches?: string
+    }
+
 export interface LoopFileMeta {
   name: string
   /** Informational — tells the runner what session type to expect. */
@@ -31,6 +50,19 @@ export interface LoopFileMeta {
   browserProfile?: string
   /** Default model for claudeCli/agent steps. */
   model?: string
+  /**
+   * Enforcement posture:
+   *  - 'explore' (default): frictionless — worker steps run with permissions
+   *    skipped unless a step declares its own `tools:` allowlist.
+   *  - 'strict': every worker step is scoped to an allowlist (its own `tools:`,
+   *    the loop-level `tools:`, or a conservative default) and unlisted tools
+   *    are denied. Right for unattended, side-effectful runs.
+   * When unset, auto-escalates to 'strict' for loops that ship hard-to-reverse
+   * changes (worktree, onSuccess: merge|pr); set it explicitly to override.
+   */
+  mode?: 'explore' | 'strict'
+  /** Default tool allowlist for claudeCli/verify steps (a step's own `tools:` overrides). */
+  tools?: string[]
   /** Default working directory for claudeCli/verify steps (a repo path makes them build workers). */
   workdir?: string
   /**
@@ -81,6 +113,19 @@ export interface LoopFileStep {
   maxSteps?: number
   /** Working directory override for this step's claude subprocess. Supports {{refs}}. */
   workdir?: string
+  /**
+   * Restrict this worker step to these tools (Claude Code names, e.g. Read,
+   * Bash, mcp__browser). Declaring an allowlist ENFORCES it regardless of mode.
+   */
+  tools?: string[]
+  /**
+   * Deterministic output contract — a HARD gate checked in code AFTER the step
+   * runs, against the step's output. Shorthand strings 'json' | 'non-empty', or
+   * an object { json, nonEmpty, contains, matches }. If it doesn't hold the step
+   * fails (and a following verify's reflexion can retry a prompt step). Runs for
+   * ANY action that produces output — provider-agnostic, not just claudeCli.
+   */
+  expect?: ExpectContract
   /** MCP servers override for this step (registry names or inline defs). */
   mcp?: McpSpec
 
@@ -366,6 +411,8 @@ function buildStepFn(
           maxTurns: capTurns(step.maxSteps),
           cwd: resolveWorkdir(step, meta, ctx),
           mcpServers: resolveMcpServers(step.mcp ?? meta.mcp),
+          tools: resolveTools(step, meta),
+          enforce: resolveMode(meta) === 'strict',
         })
         ctx.set(step.name, result.output)
         break
@@ -405,6 +452,8 @@ If the assertion does not hold, your RESULT line must be exactly: failed — exp
           maxTurns: capTurns(step.maxSteps, 10),
           cwd: resolveWorkdir(step, meta, ctx),
           mcpServers: resolveMcpServers(step.mcp ?? meta.mcp),
+          tools: resolveTools(step, meta),
+          enforce: resolveMode(meta) === 'strict',
         })
         ctx.set(step.name, result.output)
         break
@@ -629,10 +678,71 @@ If the assertion does not hold, your RESULT line must be exactly: failed — exp
         break
       }
     }
+
+    // Deterministic output gate — enforced in code, after the step ran, for
+    // whatever the step wrote as its output. Provider-agnostic by design.
+    if (step.expect !== undefined) {
+      validateOutput(step.name, ctx.get(step.name), step.expect)
+    }
   }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Effective enforcement posture. Explicit `mode:` always wins; otherwise
+ * auto-escalate to strict for loops that ship hard-to-reverse changes.
+ */
+export function resolveMode(meta: LoopFileMeta): 'explore' | 'strict' {
+  if (meta.mode === 'strict' || meta.mode === 'explore') return meta.mode
+  if (meta.worktree || meta.onSuccess === 'pr' || meta.onSuccess === 'merge') return 'strict'
+  return 'explore'
+}
+
+/** A step's tool allowlist: its own `tools:`, else the loop default, else none. */
+function resolveTools(step: LoopFileStep, meta: LoopFileMeta): string[] {
+  return step.tools ?? meta.tools ?? []
+}
+
+function normalizeExpect(
+  expect: ExpectContract,
+  stepName: string
+): { json?: boolean; nonEmpty?: boolean; contains?: string; matches?: string } {
+  if (typeof expect === 'string') {
+    const kw = expect.trim().toLowerCase()
+    if (kw === 'json') return { json: true }
+    if (kw === 'non-empty' || kw === 'nonempty') return { nonEmpty: true }
+    throw new Error(
+      `Step "${stepName}": unknown expect "${expect}" — use "json", "non-empty", or an object { json, nonEmpty, contains, matches }`
+    )
+  }
+  return expect
+}
+
+/** Check a step's output against its declared contract; throw (fail the step) if it doesn't hold. */
+export function validateOutput(stepName: string, output: unknown, expect: ExpectContract): void {
+  const checks = normalizeExpect(expect, stepName)
+  const text =
+    output == null ? ''
+    : typeof output === 'string' ? output
+    : output instanceof Uint8Array ? ''
+    : JSON.stringify(output)
+  const preview = text.replace(/\s+/g, ' ').trim().slice(0, 80)
+  const fail = (reason: string): never => {
+    throw new Error(`Step "${stepName}": output contract failed — ${reason} (got: ${preview || '<empty>'})`)
+  }
+  if (checks.nonEmpty && !text.trim()) fail('expected non-empty output')
+  if (checks.json) {
+    try { JSON.parse(text.trim()) } catch { fail('expected valid JSON') }
+  }
+  if (checks.contains && !text.includes(checks.contains)) fail(`expected output to contain "${checks.contains}"`)
+  if (checks.matches) {
+    let re: RegExp
+    try { re = new RegExp(checks.matches) }
+    catch { throw new Error(`Step "${stepName}": invalid expect.matches regex /${checks.matches}/`) }
+    if (!re.test(text)) fail(`expected output to match /${checks.matches}/`)
+  }
+}
 
 function resolveItems(step: LoopFileStep, ctx: Context): unknown[] {
   const raw = step.items

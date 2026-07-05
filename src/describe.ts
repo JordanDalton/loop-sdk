@@ -1,4 +1,4 @@
-import { parseLoopFile, type LoopFileSchema, type LoopFileStep } from './loopfile.js'
+import { parseLoopFile, resolveMode, type LoopFileSchema, type LoopFileStep } from './loopfile.js'
 import type { McpSpec } from './mcp-registry.js'
 
 /**
@@ -9,6 +9,8 @@ import type { McpSpec } from './mcp-registry.js'
 
 export interface LoopDescription {
   name: string
+  /** Effective enforcement posture, incl. auto-escalation for side-effectful loops. */
+  mode: 'explore' | 'strict'
   /** The entry loop or any reachable sub-loop declares `session: browser`. */
   needsBrowser: boolean
   /** Resolved browser flavor: fresh launch, CDP attach, or the user's Chrome via extension. */
@@ -34,7 +36,7 @@ export interface LoopDescription {
 // Step fields that are identifiers or file refs, never {{templates}}
 const NON_TEMPLATE_FIELDS = new Set([
   'name', 'action', 'as', 'output', 'loop', 'key', 'channel',
-  'retryBackoff', 'onError', 'model',
+  'retryBackoff', 'onError', 'model', 'tools', 'expect',
 ])
 
 // Vars every each-iteration provides implicitly
@@ -135,6 +137,7 @@ export function describeSchema(schema: LoopFileSchema, deps: Record<string, stri
 
   return {
     name: schema.meta.name,
+    mode: resolveMode(schema.meta),
     needsBrowser,
     browserMode,
     browserProfile: schema.meta.browserProfile,

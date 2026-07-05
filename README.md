@@ -38,7 +38,7 @@ const loop = new Loop('research')
 
 loop.step('gather', async (ctx) => {
   const result = await claudeCli(ctx, 'List the top 5 JS frameworks in 2026.')
-  ctx.set('frameworks', result.text)
+  ctx.set('frameworks', result.output)
 })
 
 loop.step('summarize', async (ctx) => {
@@ -308,8 +308,10 @@ loop.step('fill', async (ctx) => {
     screenshot: true,
     model: 'claude-opus-4-8',
     timeout: 240_000,
+    tools: ['Read', 'Edit'],  // scope the step to an allowlist
+    enforce: true,            // enforce it (deny unlisted tools) instead of skipping permissions
   })
-  ctx.set('output', result.text)
+  ctx.set('output', result.output)
 })
 ```
 
@@ -453,6 +455,11 @@ session: browser            # this loop needs a browser session
 browserMode: extension      # 'isolated' (default) | 'chrome' (CDP) | 'extension'
 browserProfile: "{{profile}}"   # which Chrome profile/identity acts ({{vars}} ok)
 model: claude-sonnet-5      # default model for claudeCli/verify steps
+mode: strict                # 'explore' (default) | 'strict' — enforcement posture (see below)
+tools:                      # default tool allowlist for worker steps (a step's own `tools:` wins)
+  - Read
+  - Edit
+  - Bash
 workdir: ~/Code/my-repo     # cwd for claudeCli/verify (a repo makes them build workers)
 worktree: true              # isolate each run's changes in a git worktree + branch
 onSuccess: pr               # runner action after success: keep | merge | pr
@@ -480,8 +487,8 @@ message: Done! Output was {{step-one}}
 
 | Action | Description |
 |--------|-------------|
-| `claudeCli` | Run `claude -p` with `prompt` (`model`, `maxSteps`, `screenshot`, `workdir`, `mcp` per step). |
-| `codexCli` | Run the OpenAI Codex CLI with `prompt`. |
+| `claudeCli` | Run `claude -p` with `prompt` (`model`, `maxSteps`, `screenshot`, `workdir`, `mcp`, `tools`, `expect` per step). |
+| `codexCli` | Run the OpenAI Codex CLI with `prompt` (`model`, `expect`). |
 | `verify` | AI judge checks `assert`; failure fails the step (and triggers reflexion). |
 | `send` | Push a `message` to the user — `channel: imessage` (with `to`) or `ntfy` (with `topic`). |
 | `navigate` / `click` / `type` / `key` / `scroll` / `screenshot` | Browser actions on the run's session. |
@@ -496,6 +503,20 @@ message: Done! Output was {{step-one}}
 **`{{name}}` interpolation** — resolves prior step outputs first, then vars (declared inputs, run-time vars, each-item aliases). Unresolved refs warn and keep the literal; use `describeLoop()` to catch them before running.
 
 **Reflexion** — when a `verify` step fails and the step before it is a prompt step, that step is retried once with the judge's critique appended, then re-verified. Opt out with `reflexion: false`.
+
+**Enforcement (`mode` / `tools` / `expect`)** — how you turn "follow the steps" from best-effort into a guarantee. The control flow already lives in the engine (not the model); these three knobs constrain what each worker step may *do* and *return*:
+
+- **`mode`** — `explore` (default) runs workers frictionless: permissions are skipped unless a step declares its own `tools:`. `strict` scopes every worker step to an allowlist and denies unlisted tools. When `mode` is unset it **auto-escalates to `strict`** for loops that ship hard-to-reverse changes (`worktree`, or `onSuccess: merge|pr`) — set it explicitly to override. The default path is unchanged from prior versions.
+- **`tools`** — a tool allowlist (Claude Code names, e.g. `[Read, Edit, Bash]`) at the loop level or per step. **Declaring an allowlist enforces it regardless of `mode`** — if you list tools, unlisted ones are denied. A live browser session automatically keeps its `mcp__browser` tools.
+- **`expect`** — a deterministic output contract checked in code *after* a step runs, for **any** action (not just `claudeCli`): `json` / `non-empty`, or an object `{ json, nonEmpty, contains, matches }`. If it doesn't hold, the step fails. Prefer this over a `verify` AI-judge whenever the check is mechanical — it's a true guarantee, not a probabilistic one.
+
+```
+## extract
+action: claudeCli
+prompt: Return the posts as a JSON array. Output ONLY JSON.
+tools: [Read]          # this step may only read files
+expect: json           # hard-fails unless the output parses as JSON
+```
 
 **Running a `.loop` file:**
 
@@ -533,7 +554,8 @@ import { describeLoop } from 'loop-sdk'
 
 const desc = describeLoop(content, deps /* optional: { 'child.loop': contents } */)
 // {
-//   name, needsBrowser, browserMode: 'launch'|'cdp'|'extension',
+//   name, mode: 'explore'|'strict',      // effective posture (incl. auto-escalation)
+//   needsBrowser, browserMode: 'launch'|'cdp'|'extension',
 //   browserProfile, cdpUrl, mcp,
 //   inputs: { city: 'Austin' },          // declared defaults
 //   stepNames: [...],
