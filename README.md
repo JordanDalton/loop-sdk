@@ -653,7 +653,7 @@ Loop files are stored in the directory set by `LOOP_DIR` (default: `.loop`).
 
 ## PlaywrightSession
 
-The built-in browser provider. Wraps the aria-playwright daemon.
+The built-in browser provider. Wraps a Playwright browser daemon over its HTTP API (default `http://localhost:4848`).
 
 ```js
 import { PlaywrightSession } from 'loop-sdk/playwright'

@@ -5,7 +5,7 @@
  *   npm install
  *   npm install @ai-sdk/anthropic @ai-sdk/openai   # or any other @ai-sdk/* provider
  *   npm run build                                   # compile TypeScript → dist/
- *   # A Session provider running (e.g. aria-playwright daemon on :4848)
+ *   # A Session provider running (e.g. a Playwright browser daemon on :4848)
  */
 
 import { Loop, agent, claudeCli, each, sub } from '../dist/index.js'

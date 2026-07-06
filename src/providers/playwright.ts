@@ -1,7 +1,7 @@
 import { Session, type ClickOptions, type ScrollOptions } from '../session.js'
 
 /**
- * PlaywrightSession — Session adapter for the aria-playwright daemon.
+ * PlaywrightSession — Session adapter for a Playwright browser daemon.
  *
  * Wraps the daemon's HTTP API (http://localhost:4848 by default).
  * Exposes mcpUrl so agent() can give AI models live browser tool access.
