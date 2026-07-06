@@ -1,6 +1,6 @@
 {
   "name": "loop-sdk",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "module",
   "description": "Loop engineering framework for building durable, long-running agentic loops \u2014 browser, AI, or both",
   "keywords": [

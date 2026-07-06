@@ -425,6 +425,7 @@ function buildStepFn(
         const result = await codexCli(ctx, prompt, {
           model: step.model,
           cwd: resolveWorkdir(step, meta, ctx),
+          mcpServers: resolveMcpServers(step.mcp ?? meta.mcp),
         })
         ctx.set(step.name, result.output)
         break

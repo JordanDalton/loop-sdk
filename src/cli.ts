@@ -1,22 +1,26 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { readFileSync, existsSync, mkdirSync, copyFileSync } from 'node:fs'
+import { resolve, join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { loadLoop, describeLoop, NullSession } from './index.js'
 
 const HELP = `loop-sdk — run .loop automation files
 
 Usage:
   loop-sdk run <file.loop> [options]
+  loop-sdk install skill [--force]
 
 Options:
-  --var key=value   Set a run-time variable (repeatable)
-  --json            Print the final run log as JSON to stdout
+  --var key=value   Set a run-time variable (repeatable, run only)
+  --json            Print the final run log as JSON to stdout (run only)
+  --force           Overwrite an existing skill (install only)
   -h, --help        Show this help
   -v, --version     Show version
 
 Examples:
   loop-sdk run research.loop
   loop-sdk run reply.loop --var profile=work --var topic=AI
+  loop-sdk install skill        # copy the bundled SKILL.md into ./.claude/skills
 
 Notes:
   The CLI runs browserless loops (claudeCli / codexCli / verify / data steps)
@@ -57,8 +61,35 @@ async function main(): Promise<void> {
     process.stdout.write(`${pkg.version}\n`)
     return
   }
-  if (cmd !== 'run') fail(`unknown command "${cmd}". Try: loop-sdk run <file.loop>`)
+  if (cmd === 'install') return installCommand(argv)
+  if (cmd === 'run') return runCommand(argv)
+  fail(`unknown command "${cmd}". Try: loop-sdk run <file.loop>  |  loop-sdk install skill`)
+}
 
+/** `loop-sdk install skill [--force]` — copy the bundled SKILL.md into the project. */
+function installCommand(argv: string[]): void {
+  const target = argv[1]
+  if (target !== 'skill') {
+    fail(`unknown install target "${target ?? ''}". Usage: loop-sdk install skill [--force]`)
+  }
+  const force = argv.includes('--force')
+  const src = fileURLToPath(new URL('../skills/loop-sdk/SKILL.md', import.meta.url))
+  if (!existsSync(src)) fail(`bundled skill not found at ${src}`)
+
+  const destDir = resolve(process.cwd(), '.claude/skills/loop-sdk')
+  const dest = join(destDir, 'SKILL.md')
+  const rel = relative(process.cwd(), dest)
+
+  if (existsSync(dest) && !force) {
+    process.stdout.write(`Skill already installed at ${rel} — pass --force to overwrite.\n`)
+    return
+  }
+  mkdirSync(destDir, { recursive: true })
+  copyFileSync(src, dest)
+  process.stdout.write(`✔ Installed loop-sdk skill → ${rel}\n`)
+}
+
+async function runCommand(argv: string[]): Promise<void> {
   const file = argv[1]
   if (!file || file.startsWith('-')) fail('missing file. Usage: loop-sdk run <file.loop>')
 

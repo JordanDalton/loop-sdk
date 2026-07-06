@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import {
   parseLoopFile, describeLoop, loadLoop, Session,
   buildPermissionArgs, STRICT_DEFAULT_TOOLS, resolveMode,
+  codexMcpArgs,
 } from '../dist/index.js'
 
 // ── Fixtures ──────────────────────────────────────────────────────────
@@ -209,6 +210,30 @@ test('buildPermissionArgs: a browser session adds the browser MCP server when en
   assert.deepEqual(buildPermissionArgs([], false, true), ['--dangerously-skip-permissions'])
 })
 
+// ── codex: MCP server → -c config overrides ───────────────────────────
+
+test('codexMcpArgs: none → no args', () => {
+  assert.deepEqual(codexMcpArgs(undefined), [])
+  assert.deepEqual(codexMcpArgs({}), [])
+})
+
+test('codexMcpArgs: stdio server → command/args/env overrides', () => {
+  const args = codexMcpArgs({
+    github: { command: 'npx', args: ['-y', '@mcp/github'], env: { TOKEN: 'abc' } },
+  })
+  assert.deepEqual(args, [
+    '-c', 'mcp_servers.github.command="npx"',
+    '-c', 'mcp_servers.github.args=["-y", "@mcp/github"]',
+    '-c', 'mcp_servers.github.env.TOKEN="abc"',
+  ])
+})
+
+test('codexMcpArgs: HTTP server → url override', () => {
+  assert.deepEqual(codexMcpArgs({ search: { type: 'http', url: 'http://localhost:1234/mcp' } }), [
+    '-c', 'mcp_servers.search.url="http://localhost:1234/mcp"',
+  ])
+})
+
 // ── enforcement: mode + auto-escalation ───────────────────────────────
 
 test('resolveMode: default explore, explicit wins, side-effects auto-escalate', () => {
@@ -343,6 +368,17 @@ value: yo
   const log = JSON.parse(r.stdout)
   assert.equal(log.status, 'completed')
   assert.deepEqual(log.steps.map((s) => s.name), ['g'])
+})
+
+test('cli: install skill copies SKILL.md and is idempotent', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sdk-install-'))
+  const r = spawnSync('node', [CLI, 'install', 'skill'], { cwd: dir, encoding: 'utf8' })
+  assert.equal(r.status, 0, r.stderr)
+  assert.ok(existsSync(join(dir, '.claude/skills/loop-sdk/SKILL.md')))
+  // re-running without --force is a successful no-op
+  const again = spawnSync('node', [CLI, 'install', 'skill'], { cwd: dir, encoding: 'utf8' })
+  assert.equal(again.status, 0)
+  assert.match(again.stdout, /already installed/)
 })
 
 test('cli: fails fast when a referenced var has no source', () => {

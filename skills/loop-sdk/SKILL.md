@@ -53,7 +53,7 @@ message: "{{gather}}"
 | Action | Key fields | Notes |
 |---|---|---|
 | `claudeCli` | `prompt`, `model`, `maxSteps`, `screenshot`, `workdir`, `mcp`, `tools`, `expect` | Spawns `claude -p`. Output = the step's `{{ref}}`. `tools:` scopes it to an allowlist; `expect:` gates its output. |
-| `codexCli` | `prompt`, `model`, `expect` | OpenAI Codex CLI. |
+| `codexCli` | `prompt`, `model`, `expect`, `mcp` | OpenAI Codex CLI. `mcp:` servers are wired via Codex `-c mcp_servers.*` overrides (stdio + HTTP). |
 | `verify` | `assert` | AI judge; failure fails the step. Put one after any step whose output matters. |
 
 **`expect:`** — a deterministic output contract enforced in code after ANY step (not just claudeCli) runs. `json` (parseable) \| `non-empty`, or an object `{ json, nonEmpty, contains, matches }` (all declared checks must hold). Fails the step if it doesn't. Prefer this over a `verify` AI-judge whenever the check is mechanical — it's a true guarantee, not a probabilistic one.

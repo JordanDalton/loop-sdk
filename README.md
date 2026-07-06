@@ -26,11 +26,10 @@ npm test   # builds, then runs the node:test suite in test/
 ## Claude Code skill
 
 `skills/loop-sdk/SKILL.md` teaches Claude Code how to author and validate
-`.loop` files idiomatically. Install it into any project:
+`.loop` files idiomatically. Install it into any project with one command:
 
 ```bash
-mkdir -p .claude/skills/loop-sdk
-cp node_modules/loop-sdk/skills/loop-sdk/SKILL.md .claude/skills/loop-sdk/
+npx loop-sdk install skill        # → ./.claude/skills/loop-sdk/SKILL.md  (--force to overwrite)
 ```
 
 Then ask Claude things like *"write a .loop that checks my mentions and drafts
@@ -498,7 +497,7 @@ message: Done! Output was {{step-one}}
 | Action | Description |
 |--------|-------------|
 | `claudeCli` | Run `claude -p` with `prompt` (`model`, `maxSteps`, `screenshot`, `workdir`, `mcp`, `tools`, `expect` per step). |
-| `codexCli` | Run the OpenAI Codex CLI with `prompt` (`model`, `expect`). |
+| `codexCli` | Run the OpenAI Codex CLI with `prompt` (`model`, `expect`, `mcp`). MCP servers are injected as Codex `-c mcp_servers.*` config overrides. |
 | `verify` | AI judge checks `assert`; failure fails the step (and triggers reflexion). |
 | `send` | Push a `message` to the user — `channel: imessage` (with `to`) or `ntfy` (with `topic`). |
 | `navigate` / `click` / `type` / `key` / `scroll` / `screenshot` | Browser actions on the run's session. |

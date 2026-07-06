@@ -22,7 +22,7 @@ export type { AgentOptions, AgentResult } from './agent.js'
 export { claudeCli, buildPermissionArgs, STRICT_DEFAULT_TOOLS } from './claude-cli.js'
 export type { ClaudeCliOptions, ClaudeCliResult } from './claude-cli.js'
 
-export { codexCli } from './codex-cli.js'
+export { codexCli, codexMcpArgs } from './codex-cli.js'
 export type { CodexCliOptions, CodexCliResult } from './codex-cli.js'
 
 export { checkpointExists, deleteCheckpoint } from './checkpoint.js'
