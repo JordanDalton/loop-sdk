@@ -62,7 +62,7 @@ message: "{{gather}}"
 | `navigate` | `url` | Browser. Also `click` (`selector`/`text`/`x`+`y`), `type` (`text`), `key`, `scroll` (`deltaY`), `screenshot`, `wait` (`ms`). |
 | `log` | `message` | Emit to the run log. |
 | `set-variable` | `key`, `value` | Referenceable as `{{key}}` and `{{step-name}}`. |
-| `subloop` | `loop: ./other.loop`, `vars`, `output` | Nested loop sharing context. (Alias: `sub`, deprecated.) |
+| `subloop` | `loop: ./other.loop` **or** inline `steps:`, `vars`, `output` | Nested loop sharing context. Use `loop:` for a separate file or `steps:` to inline the body (self-contained, no dependent file) — same either/or as `each`. Circular `loop:` refs and runaway depth (> 50) fail fast, not hang. (Alias: `sub`, deprecated.) |
 | `each` | `items`, `as`, `steps` or `loop`, `concurrency: 1-8`, `continueOnError`, `output` | Iterate. `items` may be a YAML array, a `{{ref}}` (array/JSON/lines), or literal lines. Inside: `{{item}}` (or `as` name), `{{_index}}`, `{{_total}}`. Concurrency > 1 gives each item isolated state. |
 | `parallel` | `steps` | Run inline steps concurrently. |
 | per-step error handling | `retries`, `retryDelay`, `retryBackoff: flat\|linear\|exponential`, `onError: skip` | |

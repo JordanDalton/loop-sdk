@@ -31,8 +31,8 @@ const REQUIRED: Record<string, string[][]> = {
   send: [['message', 'prompt']],
   'set-variable': [['key']],
   key: [['key']],
-  subloop: [['loop']],
-  sub: [['loop']],
+  subloop: [['loop', 'steps']],
+  sub: [['loop', 'steps']],
   each: [['items'], ['loop', 'steps']],
   parallel: [['steps']],
 }

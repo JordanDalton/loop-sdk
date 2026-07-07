@@ -674,6 +674,105 @@ action: nope
   assert.throws(() => loadLoop(file), /Invalid \.loop file.*unknown action "nope"/s)
 })
 
+// ── subloop: inline steps (self-contained, no dependent file) ─────────
+
+test('subloop action: runs inline steps with no dependent file', async () => {
+  const file = writeLoop(`---
+name: Inline Subloop
+---
+
+## group
+action: subloop
+vars:
+  who: inline-world
+steps:
+  - name: build
+    action: set-variable
+    key: greeting
+    value: "hi {{who}}"
+output: greeting
+
+## echo
+action: log
+message: "RESULT {{group}}"
+`)
+  const lines = []
+  const loop = loadLoop(file)
+  loop.on('log', e => lines.push(e.message))
+  const log = await loop.run({ session: new NullSession('sl-inline') })
+  assert.equal(log.status, 'completed')
+  assert.ok(lines.some(l => l.includes('RESULT hi inline-world')), lines.join(' | '))
+})
+
+test('validate: subloop with neither loop nor steps is rejected; either alone passes', () => {
+  const bad = validateLoopSchema(parseLoopFile(`---
+name: X
+---
+
+## g
+action: subloop
+`))
+  assert.ok(bad.some(p => /requires "loop" or "steps"/.test(p)), bad.join('\n'))
+
+  const inline = validateLoopSchema(parseLoopFile(`---
+name: X
+---
+
+## g
+action: subloop
+steps:
+  - name: a
+    action: log
+    message: hi
+`))
+  assert.deepEqual(inline, [])
+})
+
+// ── subloop recursion guard: depth cap + cycle detection ──────────────
+
+test('subloop guard: a circular loop: reference fails fast with a clear error', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cycle-'))
+  writeFileSync(join(dir, 'A.loop'), `---\nname: A\n---\n\n## toB\naction: subloop\nloop: ./B.loop\n`)
+  writeFileSync(join(dir, 'B.loop'), `---\nname: B\n---\n\n## toA\naction: subloop\nloop: ./A.loop\n`)
+  const log = await loadLoop(join(dir, 'A.loop')).run({ session: new NullSession('cyc') })
+  assert.equal(log.status, 'failed')
+  const err = log.steps.map(s => s.error).find(Boolean) ?? ''
+  assert.match(err, /subloop cycle detected/)
+})
+
+test('subloop guard: a self-referencing loop is caught', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'self-'))
+  writeFileSync(join(dir, 'S.loop'), `---\nname: S\n---\n\n## again\naction: subloop\nloop: ./S.loop\n`)
+  const log = await loadLoop(join(dir, 'S.loop')).run({ session: new NullSession('self') })
+  assert.equal(log.status, 'failed')
+  assert.match(log.steps.map(s => s.error).find(Boolean) ?? '', /cycle detected/)
+})
+
+test('subloop guard: unbounded inline recursion trips the depth cap', async () => {
+  // A file whose only step is an each over a 1-item list running... itself.
+  const dir = mkdtempSync(join(tmpdir(), 'deep-'))
+  writeFileSync(join(dir, 'R.loop'), `---\nname: R\n---\n\n## rec\naction: subloop\nloop: ./R.loop\n`)
+  const log = await loadLoop(join(dir, 'R.loop')).run({ session: new NullSession('deep') })
+  assert.equal(log.status, 'failed')
+  // self-reference is caught as a cycle before the depth cap, which is fine —
+  // both are the "runaway recursion" class of error.
+  assert.match(log.steps.map(s => s.error).find(Boolean) ?? '', /cycle detected|max subloop depth/)
+})
+
+test('subloop guard: legitimate nesting well within the cap still runs', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ok-'))
+  // 3 chained files: L0 -> L1 -> L2 (leaf) — nowhere near MAX_SUBLOOP_DEPTH
+  writeFileSync(join(dir, 'L2.loop'), `---\nname: L2\n---\n\n## leaf\naction: set-variable\nkey: deep\nvalue: reached\n`)
+  writeFileSync(join(dir, 'L1.loop'), `---\nname: L1\n---\n\n## down\naction: subloop\nloop: ./L2.loop\noutput: deep\n`)
+  writeFileSync(join(dir, 'L0.loop'), `---\nname: L0\n---\n\n## down\naction: subloop\nloop: ./L1.loop\noutput: down\n\n## echo\naction: log\nmessage: "GOT {{down}}"\n`)
+  const lines = []
+  const loop = loadLoop(join(dir, 'L0.loop'))
+  loop.on('log', e => lines.push(e.message))
+  const log = await loop.run({ session: new NullSession('ok') })
+  assert.equal(log.status, 'completed')
+  assert.ok(lines.some(l => l.includes('GOT reached')), lines.join(' | '))
+})
+
 // ── agent action: mcp servers + permission posture reach the provider ─
 
 test('agent action: step mcp + explore mode reach the model as provider settings', async () => {

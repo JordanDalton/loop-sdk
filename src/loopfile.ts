@@ -192,7 +192,7 @@ export interface LoopFileStep {
   items?: string | unknown[]
   /** Variable name for the current item inside each iteration. Default: 'item'. */
   as?: string
-  /** Inline step definitions for each iteration (alternative to referencing a loop file). */
+  /** Inline step definitions for `parallel`, `each`, and `subloop` (an alternative to referencing a `loop:` file). */
   steps?: LoopFileStep[]
   /** Which child step's output to collect (each: per iteration; sub: as this step's output). Defaults to the last step. */
   output?: string
@@ -347,6 +347,34 @@ export function runFileBackground(
 // ── Internal builders ─────────────────────────────────────────────────────────
 
 const REFLEXION_TYPES = ['claudeCli', 'codexCli', 'agent']
+
+/** Backstop against unbounded subloop/each recursion (real use is 2-5 deep). */
+export const MAX_SUBLOOP_DEPTH = 50
+
+const loopLabel = (p: string): string => (p === '(inline)' ? p : path.basename(p))
+
+/**
+ * Guard the boundary into a nested loop (subloop / each). Stamps the child
+ * context's depth and file-chain, and turns the two silent failure modes into
+ * instant, readable errors: runaway recursion (depth cap) and circular `loop:`
+ * references (a file already in the ancestor chain). `loopPath` is the resolved
+ * file for file-based nesting, or null for inline `steps:` (which can't cycle).
+ */
+function enterNestedLoop(parent: Context, child: Context, loopPath: string | null, stepName: string): void {
+  const depth = parent._loopDepth + 1
+  if (depth > MAX_SUBLOOP_DEPTH) {
+    const chain = [...parent._loopChain, loopPath ?? '(inline)'].map(loopLabel).join(' → ')
+    throw new Error(
+      `Step "${stepName}": max subloop depth (${MAX_SUBLOOP_DEPTH}) exceeded — likely unbounded recursion. Chain: ${chain}`,
+    )
+  }
+  if (loopPath && parent._loopChain.includes(loopPath)) {
+    const chain = [...parent._loopChain, loopPath].map(loopLabel).join(' → ')
+    throw new Error(`Step "${stepName}": subloop cycle detected — ${chain}`)
+  }
+  child._loopDepth = depth
+  child._loopChain = loopPath ? [...parent._loopChain, loopPath] : parent._loopChain
+}
 
 function buildLoopFromSteps(
   name: string,
@@ -624,25 +652,37 @@ If the assertion does not hold, your RESULT line must be exactly: failed — exp
         break
       }
 
-      // ── subloop: run a .loop file as a nested step, sharing context ────────
-      // ('sub' is the deprecated alias, kept so existing loops keep working.)
+      // ── subloop: run a nested loop as one step, sharing context ────────────
+      // Body is EITHER a `loop:` file path OR inline `steps:` (self-contained,
+      // no dependent file) — same either/or as `each`. ('sub' is the deprecated
+      // alias, kept so existing loops keep working.)
       case 'subloop':
       case 'sub': {
-        if (!step.loop) throw new Error(`Step "${step.name}": subloop requires a "loop" file path`)
-        const loopPath = path.resolve(basePath, step.loop)
-        const subSchema = loadLoopFile(loopPath)
-        const subLoop = loadLoop(loopPath, actions, loadOpts)
+        let subLoop: Loop
+        let lastStepName: string
+        let nestedPath: string | null = null
+        if (step.loop) {
+          nestedPath = path.resolve(basePath, step.loop)
+          const subSchema = loadLoopFile(nestedPath)
+          subLoop = loadLoop(nestedPath, actions, loadOpts)
+          lastStepName = step.output ?? subSchema.steps[subSchema.steps.length - 1].name
+        } else if (step.steps?.length) {
+          subLoop = buildLoopFromSteps(`${step.name}-subloop`, step.steps, meta, basePath, actions, loadOpts)
+          lastStepName = step.output ?? step.steps[step.steps.length - 1].name
+        } else {
+          throw new Error(`Step "${step.name}": subloop requires a "loop" file path or inline "steps"`)
+        }
         // Resolve any {{ref}} in var values from the parent context before forking
         const resolvedVars: Record<string, unknown> = {}
         for (const [k, v] of Object.entries(step.vars ?? {})) {
           resolvedVars[k] = typeof v === 'string' ? interpolate(v, ctx) : v
         }
         const childCtx = ctx.fork(resolvedVars)
+        enterNestedLoop(ctx, childCtx, nestedPath, step.name)
         await subLoop.runWith(childCtx)
         // Propagate the child's result so {{step-name}} works downstream.
         // Defaults to the child's last step output; override with "output: <step>".
-        const outputStep = step.output ?? subSchema.steps[subSchema.steps.length - 1].name
-        const result = childCtx.get(outputStep)
+        const result = childCtx.get(lastStepName)
         if (result !== undefined) ctx.set(step.name, result)
         break
       }
@@ -655,11 +695,12 @@ If the assertion does not hold, your RESULT line must be exactly: failed — exp
         // Build the per-item loop (file reference or inline steps)
         let itemLoop: Loop
         let lastStepName: string
+        let nestedPath: string | null = null
 
         if (step.loop) {
-          const loopPath = path.resolve(basePath, step.loop)
-          const schema = loadLoopFile(loopPath)
-          itemLoop = loadLoop(loopPath, actions, loadOpts)
+          nestedPath = path.resolve(basePath, step.loop)
+          const schema = loadLoopFile(nestedPath)
+          itemLoop = loadLoop(nestedPath, actions, loadOpts)
           lastStepName = step.output ?? schema.steps[schema.steps.length - 1].name
         } else if (step.steps?.length) {
           itemLoop = buildLoopFromSteps(`${step.name}-each`, step.steps, meta, basePath, actions, loadOpts)
@@ -677,6 +718,7 @@ If the assertion does not hold, your RESULT line must be exactly: failed — exp
         if (concurrency === 1) {
           for (let i = 0; i < items.length; i++) {
             const childCtx = ctx.fork({ [asVar]: items[i], _index: i, _total: items.length })
+            enterNestedLoop(ctx, childCtx, nestedPath, step.name)
             try {
               await itemLoop.runWith(childCtx)
               results[i] = childCtx.get(lastStepName)
@@ -705,6 +747,7 @@ If the assertion does not hold, your RESULT line must be exactly: failed — exp
                 laneSession,
                 { isolateState: true }
               )
+              enterNestedLoop(ctx, childCtx, nestedPath, step.name)
               try {
                 await itemLoop.runWith(childCtx)
                 results[i] = childCtx.get(lastStepName)

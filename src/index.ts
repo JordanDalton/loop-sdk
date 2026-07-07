@@ -31,7 +31,7 @@ export type { CodexCliOptions, CodexCliResult } from './codex-cli.js'
 export { checkpointExists, deleteCheckpoint } from './checkpoint.js'
 export type { Checkpoint } from './checkpoint.js'
 
-export { loadLoop, loadLoopFile, parseLoopFile, runFile, runFileBackground, resolveMode, validateOutput } from './loopfile.js'
+export { loadLoop, loadLoopFile, parseLoopFile, runFile, runFileBackground, resolveMode, validateOutput, MAX_SUBLOOP_DEPTH } from './loopfile.js'
 export type { LoopFileMeta, LoopFileStep, LoopFileSchema, ActionRegistry, LoadOptions, ExpectContract } from './loopfile.js'
 
 export { describeLoop, describeSchema } from './describe.js'

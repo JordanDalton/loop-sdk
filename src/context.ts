@@ -27,6 +27,11 @@ export class Context {
   _completedSteps: string[] = []
   _lastCompletedIndex: number = -1
 
+  /** Nesting depth and the chain of subloop files entered — used to detect
+   * runaway recursion and circular `loop:` references. Propagated through fork(). */
+  _loopDepth: number = 0
+  _loopChain: string[] = []
+
   constructor({
     session,
     vars = {},
@@ -126,7 +131,7 @@ export class Context {
     session: Session | null = null,
     opts: { isolateState?: boolean } = {}
   ): Context {
-    return new Context({
+    const child = new Context({
       session: session ?? this.session,
       vars: { ...this.vars, ...vars },
       // Isolated forks copy the state so concurrent children can't trample
@@ -137,6 +142,10 @@ export class Context {
       emitter: this._emitter,
       signal: this.signal,
     })
+    // Carry nesting bookkeeping forward so subloop/each guards see the ancestry.
+    child._loopDepth = this._loopDepth
+    child._loopChain = this._loopChain
+    return child
   }
 
   // ── session convenience methods ───────────────────────────────────────────────

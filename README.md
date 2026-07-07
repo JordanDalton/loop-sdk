@@ -520,7 +520,7 @@ message: Done! Output was {{step-one}}
 | `log` | Emit `message` to the run log. |
 | `set-variable` | Store `value` under `key` (referenceable as `{{key}}` or the step name). |
 | `parallel` | Run nested `steps` concurrently. |
-| `subloop` | Run another `.loop` file (`loop` path) sharing context; pass `vars`. (Alias: `sub`, deprecated.) |
+| `subloop` | Run a nested loop as one step, sharing context; pass `vars`, collect `output`. Body is either a `loop:` file path **or** inline `steps:` (self-contained, no separate file). Nesting is guarded: a circular `loop:` reference or runaway depth (> `MAX_SUBLOOP_DEPTH`, 50) fails fast with a clear error instead of hanging. (Alias: `sub`, deprecated.) |
 | `each` | Iterate `items` (array, `{{ref}}`, or lines) over `steps`/`loop`; `as` names the item var; `concurrency: 1-8` runs items in parallel with isolated state; `continueOnError`. |
 | *custom* | Any action name registered via the `actions` map passed to `loadLoop()` — how runners add steps like `approve` or `card`. |
 
