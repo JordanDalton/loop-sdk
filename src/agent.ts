@@ -1,4 +1,5 @@
-import { generateText, experimental_createMCPClient } from 'ai'
+import { generateText, stepCountIs } from 'ai'
+import { experimental_createMCPClient } from '@ai-sdk/mcp'
 import type { LanguageModel } from 'ai'
 import type { Context } from './context.js'
 import { resolveModel } from './registry.js'
@@ -22,7 +23,8 @@ export interface AgentOptions {
 export interface AgentResult {
   ok: true
   text: string
-  usage?: { totalTokens?: number; promptTokens?: number; completionTokens?: number }
+  /** AI SDK 5 token usage — input/output/total (v4's prompt/completion were renamed). */
+  usage?: { totalTokens?: number; inputTokens?: number; outputTokens?: number }
   steps?: unknown[]
 }
 
@@ -44,14 +46,14 @@ export async function agent(ctx: Context, prompt: string, opts: AgentOptions): P
   const { model, system, maxSteps = 50, screenshot = false, modelSettings } = opts
   const resolvedModel = await resolveModel(model, { settings: modelSettings })
 
-  type MessageContent = string | Array<{ type: 'text'; text: string } | { type: 'image'; image: Buffer; mimeType: string }>
+  type MessageContent = string | Array<{ type: 'text'; text: string } | { type: 'image'; image: Buffer; mediaType: string }>
   let userContent: MessageContent = prompt
 
   if (screenshot && ctx.session?.screenshot) {
     const imgBytes = await ctx.session.screenshot()
     userContent = [
       { type: 'text', text: prompt },
-      { type: 'image', image: imgBytes, mimeType: 'image/jpeg' },
+      { type: 'image', image: imgBytes, mediaType: 'image/jpeg' },
     ]
   }
 
@@ -70,7 +72,8 @@ export async function agent(ctx: Context, prompt: string, opts: AgentOptions): P
       model: resolvedModel,
       system,
       tools,
-      maxSteps,
+      // AI SDK 5 replaced `maxSteps` with a stop condition.
+      stopWhen: stepCountIs(maxSteps),
       messages: [{ role: 'user', content: userContent }],
     })
 

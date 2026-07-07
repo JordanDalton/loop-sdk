@@ -32,6 +32,29 @@ interface ProviderEntry {
 /** The provider used for a bare model string with no "provider:" prefix. */
 export const DEFAULT_PROVIDER = 'claude-code'
 
+/** The AI SDK model-spec version loop-sdk speaks. AI SDK 6 → LanguageModelV3. */
+const EXPECTED_SPEC = 'v3'
+const SDK_MAJOR = 6
+const OLDER_SPECS: Record<string, string> = { v1: 'AI SDK 3/4', v2: 'AI SDK 5' }
+
+/**
+ * Turn the raw "Unsupported model version" failure into an actionable one: a
+ * provider built for a different AI SDK major (older spec = older SDK, newer
+ * spec = a newer SDK) can't drive loop-sdk's generateText. Fail with the fix,
+ * not the symptom.
+ */
+function assertModelVersion(model: LanguageModel): void {
+  const spec = (model as { specificationVersion?: string }).specificationVersion
+  if (spec && spec !== EXPECTED_SPEC) {
+    const targets = OLDER_SPECS[spec] ?? 'a newer AI SDK'
+    throw new Error(
+      `This model implements AI SDK model spec "${spec}" (${targets}), but loop-sdk uses ` +
+      `AI SDK ${SDK_MAJOR} (spec "${EXPECTED_SPEC}"). Install a v${SDK_MAJOR}-compatible build of ` +
+      `the provider package, or align your @ai-sdk/* versions with loop-sdk's.`,
+    )
+  }
+}
+
 const providers = new Map<string, ProviderEntry>()
 
 /**
@@ -63,11 +86,11 @@ function lazy(pkg: string, pick: (mod: any) => ModelFactory): ProviderEntry {
 // providers. Each factory normalizes to (modelId, settings?) => LanguageModel.
 providers.set('claude-code', lazy('ai-sdk-provider-claude-code', (m: any) => {
   const provider = m.claudeCode ?? m.default
-  const create = m.createClaudeCode
-  // Per-call settings (allowedTools, mcpServers, cwd, …) route through the
-  // create* factory; the plain provider covers the no-settings case.
-  return (id, settings) =>
-    settings && create ? create(settings)(id) : provider(id)
+  // Per-call settings (mcpServers, allowedTools, cwd, …) are the model
+  // factory's SECOND argument (ClaudeCodeSettings). createClaudeCode() is only
+  // for provider-level DEFAULTS and takes a different shape — routing settings
+  // through it silently drops mcpServers.
+  return (id, settings) => provider(id, settings)
 }))
 providers.set('codex', lazy('ai-sdk-provider-codex-cli', (m: any) => {
   const provider = m.codexCli ?? m.default
@@ -101,7 +124,10 @@ export async function resolveModel(
   model: LanguageModel | string,
   opts: ResolveModelOptions = {},
 ): Promise<LanguageModel> {
-  if (typeof model !== 'string') return model
+  if (typeof model !== 'string') {
+    assertModelVersion(model)
+    return model
+  }
 
   const sep = model.indexOf(':')
   // A leading "provider:" prefix — but not a bare id that happens to contain a
@@ -120,7 +146,9 @@ export async function resolveModel(
   }
 
   const factory = await entry.load()
-  return factory(modelId, opts.settings)
+  const built = await factory(modelId, opts.settings)
+  assertModelVersion(built)
+  return built
 }
 
 /**

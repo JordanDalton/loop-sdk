@@ -14,7 +14,7 @@
 
 ```bash
 npm install loop-sdk
-npm install @ai-sdk/anthropic   # or @ai-sdk/openai, @ai-sdk/google, etc.
+npm install @ai-sdk/anthropic   # or @ai-sdk/openai, etc. — AI SDK 6 (v3 models)
 ```
 
 ## Test
@@ -282,7 +282,7 @@ export class MySession extends Session {
 
 ### agent()
 
-Run any AI model as a loop step. Uses the [Vercel AI SDK](https://sdk.vercel.ai) so every `@ai-sdk/*` provider works.
+Run any AI model as a loop step. Uses the [Vercel AI SDK](https://sdk.vercel.ai) (v6 — LanguageModelV3) so every `@ai-sdk/*` provider works. A provider built for a different AI SDK major fails fast with a directed error rather than a cryptic "unsupported model version".
 
 `model` takes either a `LanguageModel` object or a friendly `"provider:model"` **string** resolved by the built-in registry — the same string works in JS and in a `.loop` file:
 
@@ -313,7 +313,7 @@ loop.step('summarize', async (ctx) => {
 
 A bare id (no prefix) uses the default provider, `claude-code` — so `'sonnet'` means `'claude-code:sonnet'`. Each provider is an **optional** dependency: a string only needs the one package that backs it installed, and a missing one fails with a directed `npm i …` hint. Register your own with `registerProvider('id', (modelId) => model)`.
 
-> The two CLI-backed providers (`claude-code`, `codex`) run their *own* tool-use loop and ignore AI SDK tools — so `ctx.session.mcpUrl` browser tools don't reach them. For browser work with Claude Code, use a `claudeCli` step (it wires the browser MCP through Claude Code's own config). With an API provider (`anthropic:`/`openai:`), `agent()` gets the session's browser tools via MCP automatically.
+> The two CLI-backed providers (`claude-code`, `codex`) run their *own* tool-use loop and ignore AI SDK tools — so `ctx.session.mcpUrl` browser tools don't reach them. To give them MCP tools, set the step's **`mcp:`** field (registry names or inline defs, incl. remote HTTP servers) — it's handed to the provider as `mcpServers`. Permissions follow the loop's `mode`: `explore` (default) runs frictionless so tool calls aren't blocked; `strict` enforces the declared `tools:` allowlist. For browser work with Claude Code specifically, a `claudeCli` step wires the browser MCP through Claude Code's own config. With an API provider (`anthropic:`/`openai:`), `agent()` gets the session's browser tools via MCP automatically.
 
 ---
 
@@ -512,7 +512,7 @@ message: Done! Output was {{step-one}}
 |--------|-------------|
 | `claudeCli` | Run `claude -p` with `prompt` (`model`, `maxSteps`, `screenshot`, `workdir`, `mcp`, `tools`, `expect` per step). |
 | `codexCli` | Run the OpenAI Codex CLI with `prompt` (`model`, `expect`, `mcp`). MCP servers are injected as Codex `-c mcp_servers.*` config overrides. |
-| `agent` | Run any AI SDK model via `agent()`. `model` is a registry string like `claude-code:sonnet`, `codex:gpt-5.2-codex`, or `anthropic:claude-opus-4-8` (falls back to `meta.model`); also `prompt`, `system`, `maxSteps`, `screenshot`, `expect`. |
+| `agent` | Run any AI SDK model via `agent()`. `model` is a registry string like `claude-code:sonnet`, `codex:gpt-5.2-codex`, or `anthropic:claude-opus-4-8` (falls back to `meta.model`); also `prompt`, `system`, `maxSteps`, `screenshot`, `expect`, and `mcp:` (servers handed to CLI-backed providers as `mcpServers`; permission posture follows the loop's `mode`). |
 | `verify` | AI judge checks `assert`; failure fails the step (and triggers reflexion). |
 | `send` | Push a `message` to the user — `channel: imessage` (with `to`) or `ntfy` (with `topic`). |
 | `navigate` / `click` / `type` / `key` / `scroll` / `screenshot` | Browser actions on the run's session. |

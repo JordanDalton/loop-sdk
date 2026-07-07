@@ -459,11 +459,29 @@ function buildStepFn(
           `(e.g. "claude-code:sonnet", "codex:gpt-5.2-codex", "anthropic:claude-opus-4-8")`
         )
         const prompt = interpolate(step.prompt, ctx)
+        // Settings handed to the model as provider settings (ClaudeCodeSettings
+        // for claude-code; ignored by API providers). This is how the agent step
+        // gains MCP tools and a permission posture on the CLI-backed providers.
+        const agentSettings: Record<string, unknown> = {}
+        // A step's `mcp:` servers — the CLI providers run their own tool loop and
+        // consume `mcpServers` there (API providers get MCP via the session).
+        const mcpServers = resolveMcpServers(step.mcp ?? meta.mcp)
+        if (Object.keys(mcpServers).length) agentSettings.mcpServers = mcpServers
+        // Mirror the loop's enforcement so MCP/tool calls aren't silently blocked:
+        // explore (default) is frictionless; strict enforces the declared allowlist.
+        if (resolveMode(meta) === 'strict') {
+          agentSettings.permissionMode = 'default'
+          const allow = resolveTools(step, meta)
+          if (allow.length) agentSettings.allowedTools = allow
+        } else {
+          agentSettings.permissionMode = 'bypassPermissions'
+        }
         const result = await agent(ctx, prompt, {
           model: spec,
           system: step.system ? interpolate(step.system, ctx) : undefined,
           maxSteps: capTurns(step.maxSteps),
           screenshot: step.screenshot === true,
+          modelSettings: agentSettings,
         })
         ctx.set(step.name, result.text)
         break

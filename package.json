@@ -2,7 +2,7 @@
   "name": "loop-sdk",
   "version": "0.4.0",
   "type": "module",
-  "description": "Loop engineering framework for building durable, long-running agentic loops \u2014 browser, AI, or both",
+  "description": "Loop engineering framework for building durable, long-running agentic loops — browser, AI, or both",
   "keywords": [
     "loop-engineering",
     "agentic-loops",
@@ -73,9 +73,10 @@
     "test": "npm run build && node --test"
   },
   "dependencies": {
+    "@ai-sdk/mcp": "^1.0.59",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/js-yaml": "^4.0.9",
-    "ai": "^4.0.0",
+    "ai": "^6.0.220",
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {
@@ -83,9 +84,9 @@
     "typescript": "^5.0.0"
   },
   "peerDependencies": {
-    "@ai-sdk/anthropic": ">=1.0.0",
-    "@ai-sdk/openai": ">=1.0.0",
-    "ai-sdk-provider-claude-code": ">=1.0.0",
+    "@ai-sdk/anthropic": ">=3.0.0",
+    "@ai-sdk/openai": ">=3.0.0",
+    "ai-sdk-provider-claude-code": ">=3.0.0",
     "ai-sdk-provider-codex-cli": ">=1.0.0"
   },
   "peerDependenciesMeta": {

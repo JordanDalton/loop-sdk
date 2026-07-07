@@ -415,26 +415,34 @@ test('run: checkpoint state round-trips step outputs', async () => {
 
 // ── model registry ────────────────────────────────────────────────────
 
-// Minimal LanguageModelV1 stub so we can drive the `agent` action end-to-end
-// without any network or real provider package.
+// Minimal LanguageModelV3 stub (AI SDK 6) so we can drive the `agent` action
+// end-to-end without any network or real provider package.
 function stubModel(reply) {
   return {
-    specificationVersion: 'v1',
+    specificationVersion: 'v3',
     provider: 'stub',
     modelId: 'stub-model',
-    defaultObjectGenerationMode: undefined,
+    supportedUrls: {},
     async doGenerate() {
       return {
-        text: reply,
+        content: [{ type: 'text', text: reply }],
         finishReason: 'stop',
-        usage: { promptTokens: 1, completionTokens: 1 },
-        rawCall: { rawPrompt: null, rawSettings: {} },
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         warnings: [],
       }
     },
     async doStream() { throw new Error('not implemented') },
   }
 }
+
+// An older-AI-SDK (V2 = AI SDK 5) model — used to prove the version guard fires.
+function oldSpecModel() {
+  return { specificationVersion: 'v2', provider: 'stub', modelId: 'old', async doGenerate() {}, async doStream() {} }
+}
+
+test('resolveModel: a wrong-AI-SDK-version model fails with an actionable error', async () => {
+  await assert.rejects(() => resolveModel(oldSpecModel()), /AI SDK model spec "v2".*loop-sdk uses AI SDK 6/s)
+})
 
 test('resolveModel: a LanguageModel object passes through untouched', async () => {
   const model = stubModel('hi')
@@ -449,17 +457,21 @@ test('resolveModel: unknown provider throws a directed error', async () => {
 })
 
 test('resolveModel: a known-but-uninstalled provider names the npm package', async () => {
-  // ai-sdk-provider-claude-code is an optional peer, not installed in dev
+  // codex-cli provider is an optional peer, not installed in this repo
   await assert.rejects(
-    () => resolveModel('claude-code:sonnet'),
-    /npm i ai-sdk-provider-claude-code/,
+    () => resolveModel('codex:gpt-5-codex'),
+    /npm i ai-sdk-provider-codex-cli/,
   )
 })
 
-test('resolveModel: a bare id uses the default provider', async () => {
+test('resolveModel: a bare id routes to the default provider', async () => {
   assert.equal(DEFAULT_PROVIDER, 'claude-code')
-  // "sonnet" has no provider prefix → resolves through claude-code (uninstalled)
-  await assert.rejects(() => resolveModel('sonnet'), /ai-sdk-provider-claude-code/)
+  // Stub the default provider so this holds whether or not the real package is
+  // installed: a bare "sonnet" (no prefix) must resolve through claude-code.
+  let seen
+  registerProvider('claude-code', (id) => { seen = id; return stubModel('ok') })
+  await resolveModel('sonnet')
+  assert.equal(seen, 'sonnet')
 })
 
 test('registerProvider: a custom provider becomes usable as a prefix', async () => {
@@ -660,4 +672,53 @@ name: Broken
 action: nope
 `)
   assert.throws(() => loadLoop(file), /Invalid \.loop file.*unknown action "nope"/s)
+})
+
+// ── agent action: mcp servers + permission posture reach the provider ─
+
+test('agent action: step mcp + explore mode reach the model as provider settings', async () => {
+  let captured
+  registerProvider('probe', (id, settings) => { captured = settings; return stubModel('ok') })
+  const file = writeLoop(`---
+name: MCP Wiring
+---
+
+## ask
+action: agent
+model: "probe:x"
+mcp:
+  jordan:
+    type: http
+    url: https://example.com/mcp
+prompt: hi
+`)
+  const log = await loadLoop(file).run({ session: new NullSession('mcp-wire') })
+  assert.equal(log.status, 'completed')
+  assert.equal(captured?.mcpServers?.jordan?.url, 'https://example.com/mcp')
+  // explore (default) → frictionless so MCP tool calls aren't blocked
+  assert.equal(captured?.permissionMode, 'bypassPermissions')
+})
+
+test('agent action: strict mode enforces an allowlist instead of bypassing', async () => {
+  let captured
+  registerProvider('probe', (id, settings) => { captured = settings; return stubModel('ok') })
+  const file = writeLoop(`---
+name: MCP Strict
+mode: strict
+tools: [mcp__jordan__get-services]
+---
+
+## ask
+action: agent
+model: "probe:x"
+mcp:
+  jordan:
+    type: http
+    url: https://example.com/mcp
+prompt: hi
+`)
+  const log = await loadLoop(file).run({ session: new NullSession('mcp-strict') })
+  assert.equal(log.status, 'completed')
+  assert.equal(captured?.permissionMode, 'default')
+  assert.deepEqual(captured?.allowedTools, ['mcp__jordan__get-services'])
 })
