@@ -284,13 +284,16 @@ export class MySession extends Session {
 
 Run any AI model as a loop step. Uses the [Vercel AI SDK](https://sdk.vercel.ai) so every `@ai-sdk/*` provider works.
 
+`model` takes either a `LanguageModel` object or a friendly `"provider:model"` **string** resolved by the built-in registry — the same string works in JS and in a `.loop` file:
+
 ```js
 import { agent } from 'loop-sdk'
 import { anthropic } from '@ai-sdk/anthropic'
 
 loop.step('summarize', async (ctx) => {
   const result = await agent(ctx, 'Summarize the main content of this page.', {
-    model: anthropic('claude-opus-4-8'),
+    model: anthropic('claude-opus-4-8'), // an object …
+    // model: 'anthropic:claude-opus-4-8', // … or the equivalent string
     screenshot: true,    // attach a screenshot before calling the model
     maxSteps: 50,
     system: 'You are a research assistant.',
@@ -299,7 +302,18 @@ loop.step('summarize', async (ctx) => {
 })
 ```
 
-If `ctx.session.mcpUrl` is set, the model automatically gets the session's browser tools via MCP.
+**Model strings** follow the AI SDK's `provider:model` convention. Built-in providers:
+
+| Prefix | Package (optional peer) | Auth |
+|--------|-------------------------|------|
+| `claude-code:` (alias `claude:`) | [`ai-sdk-provider-claude-code`](https://ai-sdk.dev/providers/community-providers/claude-code) | Claude Pro/Max subscription — no API key |
+| `codex:` | [`ai-sdk-provider-codex-cli`](https://ai-sdk.dev/providers/community-providers/codex-cli) | ChatGPT subscription or API key |
+| `anthropic:` | `@ai-sdk/anthropic` | API key |
+| `openai:` | `@ai-sdk/openai` | API key |
+
+A bare id (no prefix) uses the default provider, `claude-code` — so `'sonnet'` means `'claude-code:sonnet'`. Each provider is an **optional** dependency: a string only needs the one package that backs it installed, and a missing one fails with a directed `npm i …` hint. Register your own with `registerProvider('id', (modelId) => model)`.
+
+> The two CLI-backed providers (`claude-code`, `codex`) run their *own* tool-use loop and ignore AI SDK tools — so `ctx.session.mcpUrl` browser tools don't reach them. For browser work with Claude Code, use a `claudeCli` step (it wires the browser MCP through Claude Code's own config). With an API provider (`anthropic:`/`openai:`), `agent()` gets the session's browser tools via MCP automatically.
 
 ---
 
@@ -328,7 +342,7 @@ loop.step('fill', async (ctx) => {
 
 | | `agent()` | `claudeCli()` |
 |-|-----------|---------------|
-| Provider | Any `@ai-sdk/*` model | Claude CLI only |
+| Provider | Any `@ai-sdk/*` model or `"provider:model"` string | Claude CLI only |
 | Tool-use loop | Managed by Vercel AI SDK | Managed by Claude Code CLI |
 | Best for | Multi-provider, programmatic control | Delegating full control to Claude |
 
@@ -498,6 +512,7 @@ message: Done! Output was {{step-one}}
 |--------|-------------|
 | `claudeCli` | Run `claude -p` with `prompt` (`model`, `maxSteps`, `screenshot`, `workdir`, `mcp`, `tools`, `expect` per step). |
 | `codexCli` | Run the OpenAI Codex CLI with `prompt` (`model`, `expect`, `mcp`). MCP servers are injected as Codex `-c mcp_servers.*` config overrides. |
+| `agent` | Run any AI SDK model via `agent()`. `model` is a registry string like `claude-code:sonnet`, `codex:gpt-5.2-codex`, or `anthropic:claude-opus-4-8` (falls back to `meta.model`); also `prompt`, `system`, `maxSteps`, `screenshot`, `expect`. |
 | `verify` | AI judge checks `assert`; failure fails the step (and triggers reflexion). |
 | `send` | Push a `message` to the user — `channel: imessage` (with `to`) or `ntfy` (with `topic`). |
 | `navigate` / `click` / `type` / `key` / `scroll` / `screenshot` | Browser actions on the run's session. |
@@ -505,9 +520,11 @@ message: Done! Output was {{step-one}}
 | `log` | Emit `message` to the run log. |
 | `set-variable` | Store `value` under `key` (referenceable as `{{key}}` or the step name). |
 | `parallel` | Run nested `steps` concurrently. |
-| `sub` | Run another `.loop` file (`loop` path) sharing context; pass `vars`. |
+| `subloop` | Run another `.loop` file (`loop` path) sharing context; pass `vars`. (Alias: `sub`, deprecated.) |
 | `each` | Iterate `items` (array, `{{ref}}`, or lines) over `steps`/`loop`; `as` names the item var; `concurrency: 1-8` runs items in parallel with isolated state; `continueOnError`. |
 | *custom* | Any action name registered via the `actions` map passed to `loadLoop()` — how runners add steps like `approve` or `card`. |
+
+**Validation (fail fast)** — `loadLoop()` validates the file *before* running any step and throws an aggregated error listing every problem: unknown actions (with a "did you mean…?" suggestion), duplicate or un-referenceable step names (names must be kebab-case to be reachable via `{{…}}`), and missing required fields. So a typo in step 5 is caught at load, not after steps 1–4 have run their side effects. Call `validateLoopSchema(parseLoopFile(src), customActions?)` yourself for editor/lint integration — it returns a `string[]` of problems (empty = valid).
 
 **`{{name}}` interpolation** — resolves prior step outputs first, then vars (declared inputs, run-time vars, each-item aliases). Unresolved refs warn and keep the literal; use `describeLoop()` to catch them before running.
 

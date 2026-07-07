@@ -13,11 +13,14 @@ export type { ContextOptions } from './context.js'
 export { Logger } from './logger.js'
 export type { RunStatus, StepStatus, RunDoc, StepRecord } from './logger.js'
 
-export { each, sub } from './flow.js'
+export { each, sub, subloop } from './flow.js'
 export type { Item, EachOptions } from './flow.js'
 
 export { agent } from './agent.js'
 export type { AgentOptions, AgentResult } from './agent.js'
+
+export { resolveModel, registerProvider, knownProviders, DEFAULT_PROVIDER } from './registry.js'
+export type { ModelFactory, ResolveModelOptions } from './registry.js'
 
 export { claudeCli, buildPermissionArgs, STRICT_DEFAULT_TOOLS } from './claude-cli.js'
 export type { ClaudeCliOptions, ClaudeCliResult } from './claude-cli.js'
@@ -33,6 +36,8 @@ export type { LoopFileMeta, LoopFileStep, LoopFileSchema, ActionRegistry, LoadOp
 
 export { describeLoop, describeSchema } from './describe.js'
 export type { LoopDescription } from './describe.js'
+
+export { validateLoopSchema, BUILTIN_ACTIONS } from './validate.js'
 
 export { ensureWorktree, WORKTREE_STATE_KEY } from './worktree.js'
 

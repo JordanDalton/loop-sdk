@@ -30,7 +30,7 @@ steps:
     prompt: "{{item}} is a made-up startup name. In exactly 5 words, imagine what it might do."
 
 ## summarize
-action: sub
+action: subloop
 loop: ./hello.loop
 vars:
   context: "startup analysis complete"

@@ -62,6 +62,9 @@ export async function sub(
   return loop.runWith(childCtx)
 }
 
+/** Alias of {@link sub} — matches the `.loop` `subloop` action name. */
+export const subloop = sub
+
 // ── internal ─────────────────────────────────────────────────────────────────
 
 interface ItemPair {

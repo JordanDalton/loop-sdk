@@ -54,6 +54,7 @@ message: "{{gather}}"
 |---|---|---|
 | `claudeCli` | `prompt`, `model`, `maxSteps`, `screenshot`, `workdir`, `mcp`, `tools`, `expect` | Spawns `claude -p`. Output = the step's `{{ref}}`. `tools:` scopes it to an allowlist; `expect:` gates its output. |
 | `codexCli` | `prompt`, `model`, `expect`, `mcp` | OpenAI Codex CLI. `mcp:` servers are wired via Codex `-c mcp_servers.*` overrides (stdio + HTTP). |
+| `agent` | `prompt`, `model`, `system`, `maxSteps`, `screenshot`, `expect` | Any AI SDK model via `agent()`. `model` is a registry string — `claude-code:sonnet` (alias `claude:`), `codex:gpt-5.2-codex`, `anthropic:claude-opus-4-8`, `openai:gpt-5`; a bare id → `claude-code`; falls back to `meta.model`. The backing provider is an optional peer dep (`ai-sdk-provider-claude-code`, etc.) — installed on demand. CLI-backed providers ignore browser MCP tools; use `claudeCli` for browser work. |
 | `verify` | `assert` | AI judge; failure fails the step. Put one after any step whose output matters. |
 
 **`expect:`** — a deterministic output contract enforced in code after ANY step (not just claudeCli) runs. `json` (parseable) \| `non-empty`, or an object `{ json, nonEmpty, contains, matches }` (all declared checks must hold). Fails the step if it doesn't. Prefer this over a `verify` AI-judge whenever the check is mechanical — it's a true guarantee, not a probabilistic one.
@@ -61,7 +62,7 @@ message: "{{gather}}"
 | `navigate` | `url` | Browser. Also `click` (`selector`/`text`/`x`+`y`), `type` (`text`), `key`, `scroll` (`deltaY`), `screenshot`, `wait` (`ms`). |
 | `log` | `message` | Emit to the run log. |
 | `set-variable` | `key`, `value` | Referenceable as `{{key}}` and `{{step-name}}`. |
-| `sub` | `loop: ./other.loop`, `vars`, `output` | Nested loop sharing context. |
+| `subloop` | `loop: ./other.loop`, `vars`, `output` | Nested loop sharing context. (Alias: `sub`, deprecated.) |
 | `each` | `items`, `as`, `steps` or `loop`, `concurrency: 1-8`, `continueOnError`, `output` | Iterate. `items` may be a YAML array, a `{{ref}}` (array/JSON/lines), or literal lines. Inside: `{{item}}` (or `as` name), `{{_index}}`, `{{_total}}`. Concurrency > 1 gives each item isolated state. |
 | `parallel` | `steps` | Run inline steps concurrently. |
 | per-step error handling | `retries`, `retryDelay`, `retryBackoff: flat\|linear\|exponential`, `onError: skip` | |
@@ -70,10 +71,18 @@ Runners may register **custom actions** (e.g. LoopDeLoop adds `approve` — huma
 gate with a `message`, and `card` — `move:` a kanban card). Only use those when
 the target runner is known to support them.
 
+**Validation (fail fast).** `loadLoop()` checks the whole file before running any
+step and throws listing every problem: unknown actions (with a "did you mean…?"),
+duplicate or non-referenceable step names, and missing required fields. Keep step
+names **kebab-case** (`## fetch-names`) — a name with spaces parses but can never
+be reached via `{{…}}`, and is now a validation error. Register custom actions via
+the `actions` map so they aren't flagged as unknown.
+
 ## Interpolation rules (the part people get wrong)
 
-- `{{name}}` resolves **prior step outputs first, then vars**. Step names
-  containing spaces are referenced with hyphens (`## my step` → `{{my-step}}`).
+- `{{name}}` resolves **prior step outputs first, then vars**. Step names must be
+  kebab-case to be referenceable — `## fetch-names` → `{{fetch-names}}`. A name
+  with spaces is a validation error (it would be unreachable).
 - Every `{{ref}}` needs a source: a prior step's name, a `set-variable` key, a
   declared input under `vars:`, or a var the runner supplies at run time
   (webhook payload fields, kanban card vars like `{{card-title}}`,

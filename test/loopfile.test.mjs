@@ -9,6 +9,8 @@ import {
   parseLoopFile, describeLoop, loadLoop, Session,
   buildPermissionArgs, STRICT_DEFAULT_TOOLS, resolveMode,
   codexMcpArgs,
+  resolveModel, registerProvider, knownProviders, DEFAULT_PROVIDER,
+  validateLoopSchema,
 } from '../dist/index.js'
 
 // ── Fixtures ──────────────────────────────────────────────────────────
@@ -409,4 +411,253 @@ test('run: checkpoint state round-trips step outputs', async () => {
   const { readFileSync } = await import('node:fs')
   const cp = JSON.parse(readFileSync(checkpointFile, 'utf8'))
   assert.equal(cp.state.greeting, 'hello from Austin')
+})
+
+// ── model registry ────────────────────────────────────────────────────
+
+// Minimal LanguageModelV1 stub so we can drive the `agent` action end-to-end
+// without any network or real provider package.
+function stubModel(reply) {
+  return {
+    specificationVersion: 'v1',
+    provider: 'stub',
+    modelId: 'stub-model',
+    defaultObjectGenerationMode: undefined,
+    async doGenerate() {
+      return {
+        text: reply,
+        finishReason: 'stop',
+        usage: { promptTokens: 1, completionTokens: 1 },
+        rawCall: { rawPrompt: null, rawSettings: {} },
+        warnings: [],
+      }
+    },
+    async doStream() { throw new Error('not implemented') },
+  }
+}
+
+test('resolveModel: a LanguageModel object passes through untouched', async () => {
+  const model = stubModel('hi')
+  assert.equal(await resolveModel(model), model)
+})
+
+test('resolveModel: unknown provider throws a directed error', async () => {
+  await assert.rejects(
+    () => resolveModel('nope:whatever'),
+    /Unknown model provider "nope".*Known providers/s,
+  )
+})
+
+test('resolveModel: a known-but-uninstalled provider names the npm package', async () => {
+  // ai-sdk-provider-claude-code is an optional peer, not installed in dev
+  await assert.rejects(
+    () => resolveModel('claude-code:sonnet'),
+    /npm i ai-sdk-provider-claude-code/,
+  )
+})
+
+test('resolveModel: a bare id uses the default provider', async () => {
+  assert.equal(DEFAULT_PROVIDER, 'claude-code')
+  // "sonnet" has no provider prefix → resolves through claude-code (uninstalled)
+  await assert.rejects(() => resolveModel('sonnet'), /ai-sdk-provider-claude-code/)
+})
+
+test('registerProvider: a custom provider becomes usable as a prefix', async () => {
+  const model = stubModel('registered')
+  registerProvider('stub', (id) => { assert.equal(id, 'my-model'); return model })
+  assert.ok(knownProviders().includes('stub'))
+  assert.equal(await resolveModel('stub:my-model'), model)
+})
+
+test('parseLoopFile: an agent step parses and its prompt/system refs are collected', () => {
+  const src = `---
+name: Agent Loop
+---
+
+## think
+action: agent
+model: "stub:my-model"
+system: "You are {{persona}}."
+prompt: "Summarize {{topic}}."
+`
+  const schema = parseLoopFile(src)
+  assert.equal(schema.steps[0].action, 'agent')
+  assert.equal(schema.steps[0].model, 'stub:my-model')
+  const d = describeLoop(src)
+  assert.ok(d.referencedVars.includes('persona'))
+  assert.ok(d.referencedVars.includes('topic'))
+})
+
+test('agent action: runs via a registered provider, output flows downstream', async () => {
+  registerProvider('stub', () => stubModel('the answer'))
+  const dir = mkdtempSync(join(tmpdir(), 'sdk-test-'))
+  const file = join(dir, 'agent.loop')
+  writeFileSync(file, `---
+name: Agent Run
+---
+
+## ask
+action: agent
+model: "stub:x"
+prompt: "anything"
+
+## echo
+action: log
+message: "GOT {{ask}}"
+`)
+  const lines = []
+  const loop = loadLoop(file)
+  loop.on('log', e => lines.push(e.message))
+  const log = await loop.run({ session: new NullSession('agent-1') })
+  assert.equal(log.status, 'completed')
+  assert.ok(lines.some(l => l.includes('GOT the answer')), lines.join('\n'))
+})
+
+test('agent action: a missing model is caught at load time (fail fast)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sdk-test-'))
+  const file = join(dir, 'nomodel.loop')
+  writeFileSync(file, `---
+name: No Model
+---
+
+## ask
+action: agent
+prompt: "anything"
+`)
+  assert.throws(() => loadLoop(file), /requires a "model"/)
+})
+
+// ── subloop action (with `sub` back-compat alias) ─────────────────────
+
+test('subloop action: runs a nested .loop and propagates its output; `sub` alias still works', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sdk-test-'))
+  writeFileSync(join(dir, 'child.loop'), `---
+name: Child
+---
+
+## make
+action: set-variable
+key: greeting
+value: "hi {{who}}"
+`)
+  for (const action of ['subloop', 'sub']) {
+    const parent = join(dir, `${action}-parent.loop`)
+    writeFileSync(parent, `---
+name: Parent ${action}
+---
+
+## call
+action: ${action}
+loop: ./child.loop
+output: greeting
+vars:
+  who: world
+
+## echo
+action: log
+message: "RESULT {{call}}"
+`)
+    const lines = []
+    const loop = loadLoop(parent)
+    loop.on('log', e => lines.push(e.message))
+    const log = await loop.run({ session: new NullSession(`sl-${action}`) })
+    assert.equal(log.status, 'completed', `${action} status`)
+    assert.ok(lines.some(l => l.includes('RESULT hi world')), `${action}: ${lines.join(' | ')}`)
+  }
+})
+
+// ── validateLoopSchema (load-time fail-fast) ──────────────────────────
+
+test('validate: a clean schema returns no problems', () => {
+  assert.deepEqual(validateLoopSchema(parseLoopFile(BASIC)), [])
+})
+
+test('validate: unknown action is rejected with a typo suggestion', () => {
+  const problems = validateLoopSchema(parseLoopFile(`---
+name: X
+---
+
+## go
+action: claudeCLI
+prompt: hi
+`))
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /unknown action "claudeCLI".*did you mean "claudeCli"/)
+})
+
+test('validate: a custom action passes when registered, fails when not', () => {
+  const src = `---
+name: X
+---
+
+## approve
+action: approve
+`
+  assert.deepEqual(validateLoopSchema(parseLoopFile(src), ['approve']), [])
+  assert.match(validateLoopSchema(parseLoopFile(src))[0], /unknown action "approve"/)
+})
+
+test('validate: un-referenceable and duplicate step names are flagged', () => {
+  const problems = validateLoopSchema(parseLoopFile(`---
+name: X
+---
+
+## Fetch Names
+action: log
+message: hi
+
+## Fetch Names
+action: log
+message: bye
+`))
+  assert.ok(problems.some(p => /not referenceable.*kebab-case.*fetch-names/.test(p)), problems.join('\n'))
+  assert.ok(problems.some(p => /duplicate step name "Fetch Names"/.test(p)), problems.join('\n'))
+})
+
+test('validate: missing required fields are reported (incl. or-groups)', () => {
+  const problems = validateLoopSchema(parseLoopFile(`---
+name: X
+---
+
+## a
+action: claudeCli
+
+## b
+action: verify
+
+## c
+action: navigate
+`))
+  assert.ok(problems.some(p => /"a".*requires "prompt"/.test(p)), problems.join('\n'))
+  assert.ok(problems.some(p => /"b".*requires "assert" or "prompt"/.test(p)), problems.join('\n'))
+  assert.ok(problems.some(p => /"c".*requires "url" or "prompt"/.test(p)), problems.join('\n'))
+})
+
+test('validate: recurses into inline parallel/each steps', () => {
+  const problems = validateLoopSchema(parseLoopFile(`---
+name: X
+---
+
+## fan
+action: parallel
+steps:
+  - name: ok-child
+    action: log
+    message: hi
+  - name: bad child
+    action: nope
+`))
+  assert.ok(problems.some(p => /inline step "bad child": name is not referenceable/.test(p)), problems.join('\n'))
+  assert.ok(problems.some(p => /unknown action "nope"/.test(p)), problems.join('\n'))
+})
+
+test('validate: loadLoop throws an aggregated, readable error', () => {
+  const file = writeLoop(`---
+name: Broken
+---
+
+## go
+action: nope
+`)
+  assert.throws(() => loadLoop(file), /Invalid \.loop file.*unknown action "nope"/s)
 })

@@ -7,7 +7,9 @@ import { ensureWorktree } from './worktree.js'
 import { resolveMcpServers, type McpSpec } from './mcp-registry.js'
 import { claudeCli } from './claude-cli.js'
 import { codexCli } from './codex-cli.js'
+import { agent } from './agent.js'
 import { notifyOn, sendIMessage } from './notify.js'
+import { validateLoopSchema } from './validate.js'
 import type { Context } from './context.js'
 import type { Session } from './session.js'
 import type { RunOptions, RunLog, RunHandle } from './loop.js'
@@ -95,18 +97,24 @@ export interface LoopFileMeta {
 export interface LoopFileStep {
   name: string
   /**
-   * Built-in actions: claudeCli | codexCli | verify | send | navigate | click | type | key | scroll | screenshot | wait | log | set-variable | sub | each | parallel
+   * Built-in actions: claudeCli | codexCli | agent | verify | send | navigate | click | type | key | scroll | screenshot | wait | log | set-variable | subloop | each | parallel
    * Custom: any string key registered in the actions map passed to loadLoop()
    */
   action: string
 
-  // ── claudeCli / agent
+  // ── claudeCli / codexCli / agent / verify
   /** Prompt text. Supports {{step-name}} interpolation. */
   prompt?: string
   /** Assertion for verify steps. Supports {{step-name}} interpolation. */
   assert?: string
-  /** Model override for this step. */
+  /**
+   * Model override for this step. For claudeCli/codexCli it's the CLI --model
+   * name; for an `agent` step it's a registry spec — a "provider:model" string
+   * like "claude-code:sonnet", "codex:gpt-5.2-codex", or "anthropic:claude-opus-4-8".
+   */
   model?: string
+  /** System prompt for an `agent` step. Supports {{step-name}} interpolation. */
+  system?: string
   /** Attach a screenshot of the current browser state to the prompt. */
   screenshot?: boolean
   /** Cap on agentic turns for this step (claude --max-turns). */
@@ -259,11 +267,22 @@ export interface LoadOptions {
 /**
  * Load a .loop file and return a configured Loop instance ready to run.
  *
- * Built-in actions: claudeCli, codexCli, verify, send, navigate, click, type, key, scroll, screenshot, wait, log, set-variable, sub, each, parallel
+ * Built-in actions: claudeCli, codexCli, agent, verify, send, navigate, click, type, key, scroll, screenshot, wait, log, set-variable, subloop, each, parallel
  * Pass `actions` to register custom action handlers.
  */
 export function loadLoop(filePath: string, actions: ActionRegistry = {}, loadOpts: LoadOptions = {}): Loop {
   const schema = loadLoopFile(filePath)
+
+  // Fail fast: catch unknown actions, un-referenceable/duplicate names, and
+  // missing required fields BEFORE running any step (and its side effects).
+  const problems = validateLoopSchema(schema, Object.keys(actions))
+  if (problems.length) {
+    throw new Error(
+      `Invalid .loop file (${path.basename(filePath)}):\n` +
+      problems.map(p => `  • ${p}`).join('\n'),
+    )
+  }
+
   const basePath = path.dirname(path.resolve(filePath))
   const loop = buildLoopFromSteps(schema.meta.name, schema.steps, schema.meta, basePath, actions, loadOpts)
 
@@ -327,7 +346,7 @@ export function runFileBackground(
 
 // ── Internal builders ─────────────────────────────────────────────────────────
 
-const REFLEXION_TYPES = ['claudeCli', 'codexCli']
+const REFLEXION_TYPES = ['claudeCli', 'codexCli', 'agent']
 
 function buildLoopFromSteps(
   name: string,
@@ -428,6 +447,25 @@ function buildStepFn(
           mcpServers: resolveMcpServers(step.mcp ?? meta.mcp),
         })
         ctx.set(step.name, result.output)
+        break
+      }
+
+      // ── agent: run any AI SDK model (registry "provider:model" string) ─────
+      case 'agent': {
+        if (!step.prompt) throw new Error(`Step "${step.name}": agent requires a prompt`)
+        const spec = step.model ?? meta.model
+        if (!spec) throw new Error(
+          `Step "${step.name}": agent requires a "model" — set it on the step or as meta.model ` +
+          `(e.g. "claude-code:sonnet", "codex:gpt-5.2-codex", "anthropic:claude-opus-4-8")`
+        )
+        const prompt = interpolate(step.prompt, ctx)
+        const result = await agent(ctx, prompt, {
+          model: spec,
+          system: step.system ? interpolate(step.system, ctx) : undefined,
+          maxSteps: capTurns(step.maxSteps),
+          screenshot: step.screenshot === true,
+        })
+        ctx.set(step.name, result.text)
         break
       }
 
@@ -568,9 +606,11 @@ If the assertion does not hold, your RESULT line must be exactly: failed — exp
         break
       }
 
-      // ── sub: run a .loop file as a nested step, sharing context ────────────
+      // ── subloop: run a .loop file as a nested step, sharing context ────────
+      // ('sub' is the deprecated alias, kept so existing loops keep working.)
+      case 'subloop':
       case 'sub': {
-        if (!step.loop) throw new Error(`Step "${step.name}": sub requires a "loop" file path`)
+        if (!step.loop) throw new Error(`Step "${step.name}": subloop requires a "loop" file path`)
         const loopPath = path.resolve(basePath, step.loop)
         const subSchema = loadLoopFile(loopPath)
         const subLoop = loadLoop(loopPath, actions, loadOpts)
