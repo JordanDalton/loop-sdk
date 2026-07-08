@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.0
+
+Editor & CI tooling for `.loop` files.
+
+### Added
+
+- **`loop.schema.json`** — a canonical JSON Schema for `.loop` files (the normalized `{ meta, steps }` form), derived from the type definitions and the per-action required-field rules. It's the machine-readable spec that external tooling and a future editor extension consume. Bundled in the package and installable into a project with `loop-sdk install schema`.
+- **`loop-sdk validate <file.loop>`** — lint a `.loop` file without running it. Runs the same fail-fast checks as `loadLoop()` (unknown actions with "did you mean…?" suggestions, duplicate or non-referenceable step names, missing required fields) and exits non-zero on problems, so it drops straight into CI or a pre-commit hook.
+
+### Notes
+
+- No `yaml.schemas` auto-wiring: `.loop` files are YAML front-matter plus markdown `## step` sections, not a single YAML document, so a naive schema mapping would misparse valid files. Use `loop-sdk validate` today; the schema is the foundation a VS Code extension will build on.
+
 ## 0.5.0
 
 Model registry, the `agent` step, AI SDK 6, and safer `.loop` files.

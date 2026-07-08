@@ -2,25 +2,29 @@
 import { readFileSync, existsSync, mkdirSync, copyFileSync } from 'node:fs'
 import { resolve, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { loadLoop, describeLoop, NullSession } from './index.js'
+import { loadLoop, describeLoop, parseLoopFile, validateLoopSchema, NullSession } from './index.js'
 
 const HELP = `loop-sdk — run .loop automation files
 
 Usage:
   loop-sdk run <file.loop> [options]
-  loop-sdk install skill [--force]
+  loop-sdk validate <file.loop>
+  loop-sdk install skill  [--force]
+  loop-sdk install schema [--force]
 
 Options:
   --var key=value   Set a run-time variable (repeatable, run only)
   --json            Print the final run log as JSON to stdout (run only)
-  --force           Overwrite an existing skill (install only)
+  --force           Overwrite an existing file (install only)
   -h, --help        Show this help
   -v, --version     Show version
 
 Examples:
   loop-sdk run research.loop
   loop-sdk run reply.loop --var profile=work --var topic=AI
-  loop-sdk install skill        # copy the bundled SKILL.md into ./.claude/skills
+  loop-sdk validate research.loop   # lint a .loop file without running it
+  loop-sdk install skill            # copy the bundled SKILL.md into ./.claude/skills
+  loop-sdk install schema           # copy loop.schema.json into ./.loop-sdk (spec for editors/CI)
 
 Notes:
   The CLI runs browserless loops (claudeCli / codexCli / verify / data steps)
@@ -62,31 +66,100 @@ async function main(): Promise<void> {
     return
   }
   if (cmd === 'install') return installCommand(argv)
+  if (cmd === 'validate') return validateCommand(argv)
   if (cmd === 'run') return runCommand(argv)
-  fail(`unknown command "${cmd}". Try: loop-sdk run <file.loop>  |  loop-sdk install skill`)
+  fail(`unknown command "${cmd}". Try: loop-sdk run <file.loop>  |  loop-sdk validate <file.loop>  |  loop-sdk install skill|schema`)
 }
 
-/** `loop-sdk install skill [--force]` — copy the bundled SKILL.md into the project. */
+/** `loop-sdk install skill|schema [--force]` — copy a bundled asset into the project. */
 function installCommand(argv: string[]): void {
   const target = argv[1]
-  if (target !== 'skill') {
-    fail(`unknown install target "${target ?? ''}". Usage: loop-sdk install skill [--force]`)
-  }
   const force = argv.includes('--force')
-  const src = fileURLToPath(new URL('../skills/loop-sdk/SKILL.md', import.meta.url))
-  if (!existsSync(src)) fail(`bundled skill not found at ${src}`)
 
-  const destDir = resolve(process.cwd(), '.claude/skills/loop-sdk')
-  const dest = join(destDir, 'SKILL.md')
+  if (target === 'skill') {
+    return installAsset({
+      label: 'skill',
+      src: '../skills/loop-sdk/SKILL.md',
+      destDir: '.claude/skills/loop-sdk',
+      file: 'SKILL.md',
+      force,
+    })
+  }
+  if (target === 'schema') {
+    installAsset({
+      label: 'schema',
+      src: '../schemas/loop.schema.json',
+      destDir: '.loop-sdk',
+      file: 'loop.schema.json',
+      force,
+    })
+    process.stdout.write(
+      `  This is the machine-readable spec for .loop files — consumed by CI, external\n` +
+      `  tooling, and a future editor extension. Lint a file today with:\n` +
+      `    loop-sdk validate <file.loop>\n` +
+      `  Note: .loop files are front-matter + markdown step sections, not a single YAML\n` +
+      `  document, so a plain \`yaml.schemas\` mapping won't validate them cleanly.\n`
+    )
+    return
+  }
+  fail(`unknown install target "${target ?? ''}". Usage: loop-sdk install skill|schema [--force]`)
+}
+
+function installAsset(opts: {
+  label: string
+  src: string
+  destDir: string
+  file: string
+  force: boolean
+}): void {
+  const src = fileURLToPath(new URL(opts.src, import.meta.url))
+  if (!existsSync(src)) fail(`bundled ${opts.label} not found at ${src}`)
+
+  const destDir = resolve(process.cwd(), opts.destDir)
+  const dest = join(destDir, opts.file)
   const rel = relative(process.cwd(), dest)
 
-  if (existsSync(dest) && !force) {
-    process.stdout.write(`Skill already installed at ${rel} — pass --force to overwrite.\n`)
+  if (existsSync(dest) && !opts.force) {
+    process.stdout.write(`${opts.label} already installed at ${rel} — pass --force to overwrite.\n`)
     return
   }
   mkdirSync(destDir, { recursive: true })
   copyFileSync(src, dest)
-  process.stdout.write(`✔ Installed loop-sdk skill → ${rel}\n`)
+  process.stdout.write(`✔ Installed loop-sdk ${opts.label} → ${rel}\n`)
+}
+
+/** `loop-sdk validate <file.loop>` — parse and lint a .loop file without running it. */
+function validateCommand(argv: string[]): void {
+  const file = argv[1]
+  if (!file || file.startsWith('-')) fail('missing file. Usage: loop-sdk validate <file.loop>')
+
+  const path = resolve(process.cwd(), file)
+  let content: string
+  try {
+    content = readFileSync(path, 'utf8')
+  } catch {
+    fail(`cannot read file: ${path}`)
+  }
+
+  const rel = relative(process.cwd(), path)
+
+  // Parse errors (missing front-matter, no action, no steps) throw here.
+  let schema
+  try {
+    schema = parseLoopFile(content)
+  } catch (err) {
+    fail(`invalid .loop file (${rel}): ${(err as Error).message}`)
+  }
+
+  // Schema problems (unknown actions, duplicate/non-referenceable names,
+  // missing required fields) — the same fail-fast checks loadLoop() runs.
+  const problems = validateLoopSchema(schema)
+  if (problems.length) {
+    process.stderr.write(`✗ ${rel} has ${problems.length} problem(s):\n`)
+    for (const p of problems) process.stderr.write(`  • ${p}\n`)
+    process.exit(1)
+  }
+  process.stdout.write(`✔ ${rel} is valid.\n`)
 }
 
 async function runCommand(argv: string[]): Promise<void> {

@@ -1,0 +1,306 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/loop-sdk/loop.schema.json",
+  "title": "loop-sdk .loop file",
+  "description": "The normalized object form of a .loop file: front-matter `meta` plus the ordered `steps`. A .loop file on disk is YAML front-matter (--- ... ---) followed by markdown `## step-name` sections, each an action's YAML body; this schema describes what that parses into. Source of truth for editors, linters, and the loop-sdk validator.",
+  "type": "object",
+  "required": ["meta", "steps"],
+  "properties": {
+    "meta": { "$ref": "#/$defs/meta" },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Ordered steps. Each step's output is referenceable downstream as {{step-name}}.",
+      "items": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "meta": {
+      "type": "object",
+      "description": "Front-matter — loop-wide configuration and defaults.",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Loop name (required)."
+        },
+        "session": {
+          "type": "string",
+          "description": "Informational — the session type the runner should expect (e.g. \"browser\")."
+        },
+        "browserMode": {
+          "enum": ["isolated", "chrome"],
+          "description": "Browser flavor: 'isolated' (fresh Chrome, default) or 'chrome' (attach to your real Chrome over CDP)."
+        },
+        "cdpUrl": {
+          "type": "string",
+          "description": "CDP endpoint for browserMode: chrome. Default: http://localhost:9222"
+        },
+        "browserProfile": {
+          "type": "string",
+          "description": "Chrome profile for the run's browser (interpreted by the runner)."
+        },
+        "model": {
+          "type": "string",
+          "description": "Default model for claudeCli / agent steps. For `agent` it's a registry \"provider:model\" spec, e.g. \"claude-code:sonnet\", \"codex:gpt-5.2-codex\", \"anthropic:claude-opus-4-8\"."
+        },
+        "mode": {
+          "enum": ["explore", "strict"],
+          "description": "Enforcement posture. 'explore' (default): frictionless — worker steps skip permissions unless they declare their own `tools:`. 'strict': every worker step is scoped to an allowlist and unlisted tools are denied. When unset, auto-escalates to 'strict' for loops that ship hard-to-reverse changes (worktree, onSuccess: merge|pr)."
+        },
+        "tools": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Default tool allowlist for claudeCli / verify steps (a step's own `tools:` overrides)."
+        },
+        "workdir": {
+          "type": "string",
+          "description": "Default working directory for claudeCli / verify steps (a repo path makes them build workers)."
+        },
+        "worktree": {
+          "type": "boolean",
+          "description": "Isolate this run's file changes in a git worktree. workdir must be inside a git repo; each run gets its own branch (loop/<name>-<id>)."
+        },
+        "onSuccess": {
+          "enum": ["keep", "merge", "pr"],
+          "description": "What the runner does with the run's worktree branch after a SUCCESSFUL run: 'keep' (default), 'merge' back into the source branch, or 'pr' (push + open a pull request)."
+        },
+        "reflexion": {
+          "type": "boolean",
+          "description": "When a verify step fails and the step before it is a prompt step, retry that step ONCE with the judge's critique appended, then verify again. Default: true."
+        },
+        "mcp": { "$ref": "#/$defs/mcpSpec" },
+        "vars": {
+          "type": "object",
+          "description": "Declared input defaults for the loop (lose to any value the host passes in).",
+          "additionalProperties": true
+        },
+        "notify": {
+          "type": "object",
+          "description": "Notification config applied to this loop and its sub-loops.",
+          "properties": {
+            "onStart": { "type": "boolean" },
+            "onComplete": { "type": "boolean" },
+            "onError": { "type": "boolean" },
+            "onStepError": { "type": "boolean" },
+            "sound": { "type": "boolean" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "step": {
+      "type": "object",
+      "required": ["name", "action"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[\\w-]+$",
+          "description": "Unique, kebab-case (letters, digits, hyphens) so it's reachable via {{name}}."
+        },
+        "action": {
+          "description": "A built-in action or any custom action registered in the actions map passed to loadLoop().",
+          "anyOf": [
+            {
+              "enum": [
+                "claudeCli", "codexCli", "agent", "verify",
+                "send", "navigate", "click", "type", "key", "scroll", "screenshot",
+                "wait", "log", "set-variable", "subloop", "sub", "each", "parallel"
+              ]
+            },
+            { "type": "string" }
+          ]
+        },
+
+        "prompt": {
+          "type": "string",
+          "description": "Prompt text (claudeCli / codexCli / agent / verify). Supports {{step-name}} interpolation."
+        },
+        "assert": {
+          "type": "string",
+          "description": "Assertion for verify steps. Supports {{step-name}} interpolation."
+        },
+        "model": {
+          "type": "string",
+          "description": "Model override for this step. claudeCli/codexCli: the CLI --model name. agent: a registry \"provider:model\" spec."
+        },
+        "system": {
+          "type": "string",
+          "description": "System prompt for an `agent` step. Supports {{step-name}} interpolation."
+        },
+        "screenshot": {
+          "type": "boolean",
+          "description": "Attach a screenshot of the current browser state to the prompt."
+        },
+        "maxSteps": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Cap on agentic turns for this step (claude --max-turns)."
+        },
+        "workdir": {
+          "type": "string",
+          "description": "Working directory override for this step's subprocess. Supports {{refs}}."
+        },
+        "tools": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Restrict this worker step to these tools (Claude Code names, e.g. Read, Bash, mcp__browser). Declaring an allowlist ENFORCES it regardless of mode."
+        },
+        "expect": { "$ref": "#/$defs/expect" },
+        "mcp": { "$ref": "#/$defs/mcpSpec" },
+
+        "url": {
+          "type": "string",
+          "description": "URL for navigate steps. Supports {{step-name}} interpolation."
+        },
+        "message": {
+          "type": "string",
+          "description": "Message for log / send steps. Supports {{step-name}} interpolation."
+        },
+        "ms": {
+          "type": "number",
+          "description": "Milliseconds to pause (wait). Default: 1000."
+        },
+        "channel": {
+          "enum": ["imessage", "ntfy"],
+          "description": "Delivery channel for send: 'imessage' (default) or 'ntfy'."
+        },
+        "to": {
+          "type": "string",
+          "description": "iMessage recipient — your own phone number or Apple ID email."
+        },
+        "topic": {
+          "type": "string",
+          "description": "ntfy.sh topic to publish to."
+        },
+        "title": {
+          "type": "string",
+          "description": "Notification title (ntfy)."
+        },
+        "key": {
+          "type": "string",
+          "description": "Variable name (set-variable) or keyboard key to press (key)."
+        },
+        "value": {
+          "type": "string",
+          "description": "Value to store (set-variable). Supports {{step-name}} interpolation."
+        },
+        "selector": {
+          "type": "string",
+          "description": "CSS selector to click. Supports {{step-name}} interpolation."
+        },
+        "text": {
+          "type": "string",
+          "description": "Element text to click, or text to type. Supports {{step-name}} interpolation."
+        },
+        "x": { "type": "number", "description": "Click x coordinate." },
+        "y": { "type": "number", "description": "Click y coordinate." },
+        "deltaY": {
+          "type": "number",
+          "description": "Vertical scroll amount in px (scroll). Default: 300."
+        },
+        "loop": {
+          "type": "string",
+          "description": "Path to another .loop file to run as a nested sub-loop (subloop / each)."
+        },
+        "vars": {
+          "type": "object",
+          "description": "Extra vars to pass into the sub-loop context.",
+          "additionalProperties": true
+        },
+        "items": {
+          "description": "Items to iterate over (each): a {{step-name}} reference or a literal YAML array.",
+          "anyOf": [{ "type": "string" }, { "type": "array" }]
+        },
+        "as": {
+          "type": "string",
+          "description": "Variable name for the current item inside each iteration. Default: 'item'."
+        },
+        "steps": {
+          "type": "array",
+          "description": "Inline step definitions for parallel / each / subloop (an alternative to a `loop:` file).",
+          "items": { "$ref": "#/$defs/step" }
+        },
+        "output": {
+          "type": "string",
+          "description": "Which child step's output to collect (each: per iteration; sub: as this step's output). Defaults to the last step."
+        },
+        "continueOnError": {
+          "type": "boolean",
+          "description": "If true, each continues past failed items instead of aborting."
+        },
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Run up to N items at once (1-8, default 1). Parallel items get isolated state."
+        },
+
+        "retries": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Retry this step up to N times on failure."
+        },
+        "retryDelay": {
+          "type": "number",
+          "description": "Milliseconds to wait between retries."
+        },
+        "retryBackoff": {
+          "enum": ["flat", "linear", "exponential"],
+          "description": "Backoff strategy between retries."
+        },
+        "skipOnError": {
+          "type": "boolean",
+          "description": "Skip this step instead of failing the loop."
+        },
+        "onError": {
+          "description": "'skip' is shorthand for skipOnError: true.",
+          "anyOf": [{ "const": "skip" }, { "type": "string" }]
+        }
+      },
+      "allOf": [
+        { "if": { "properties": { "action": { "const": "claudeCli" } } }, "then": { "required": ["prompt"] } },
+        { "if": { "properties": { "action": { "const": "codexCli" } } }, "then": { "required": ["prompt"] } },
+        { "if": { "properties": { "action": { "const": "agent" } } }, "then": { "required": ["prompt"] } },
+        { "if": { "properties": { "action": { "const": "verify" } } }, "then": { "anyOf": [{ "required": ["assert"] }, { "required": ["prompt"] }] } },
+        { "if": { "properties": { "action": { "const": "navigate" } } }, "then": { "anyOf": [{ "required": ["url"] }, { "required": ["prompt"] }] } },
+        { "if": { "properties": { "action": { "const": "log" } } }, "then": { "anyOf": [{ "required": ["message"] }, { "required": ["prompt"] }] } },
+        { "if": { "properties": { "action": { "const": "send" } } }, "then": { "anyOf": [{ "required": ["message"] }, { "required": ["prompt"] }] } },
+        { "if": { "properties": { "action": { "const": "set-variable" } } }, "then": { "required": ["key"] } },
+        { "if": { "properties": { "action": { "const": "key" } } }, "then": { "required": ["key"] } },
+        { "if": { "properties": { "action": { "const": "subloop" } } }, "then": { "anyOf": [{ "required": ["loop"] }, { "required": ["steps"] }] } },
+        { "if": { "properties": { "action": { "const": "sub" } } }, "then": { "anyOf": [{ "required": ["loop"] }, { "required": ["steps"] }] } },
+        { "if": { "properties": { "action": { "const": "each" } } }, "then": { "allOf": [{ "required": ["items"] }, { "anyOf": [{ "required": ["loop"] }, { "required": ["steps"] }] }] } },
+        { "if": { "properties": { "action": { "const": "parallel" } } }, "then": { "required": ["steps"] } }
+      ],
+      "additionalProperties": true
+    },
+
+    "expect": {
+      "description": "Deterministic output contract — a HARD gate checked in code after the step runs.",
+      "oneOf": [
+        { "enum": ["json", "non-empty", "nonempty"] },
+        {
+          "type": "object",
+          "properties": {
+            "json": { "type": "boolean", "description": "Output must parse as JSON." },
+            "nonEmpty": { "type": "boolean", "description": "Output (trimmed) must be non-empty." },
+            "contains": { "type": "string", "description": "Output must contain this substring." },
+            "matches": { "type": "string", "description": "Output must match this regular expression (JS syntax)." }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "mcpSpec": {
+      "description": "MCP servers: a list of names resolved from ~/.loopdeloop/mcp.json, or inline server definitions.",
+      "anyOf": [
+        { "type": "array", "items": { "type": "string" } },
+        { "type": "object", "additionalProperties": true }
+      ]
+    }
+  }
+}

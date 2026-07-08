@@ -1,6 +1,6 @@
 {
   "name": "loop-sdk",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "description": "Loop engineering framework for building durable, long-running agentic loops — browser, AI, or both",
   "keywords": [
@@ -60,7 +60,8 @@
   },
   "files": [
     "dist",
-    "skills"
+    "skills",
+    "schemas"
   ],
   "scripts": {
     "build": "tsc",
