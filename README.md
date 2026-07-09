@@ -179,6 +179,37 @@ await deleteCheckpoint('.loop/my-run.checkpoint.json')
 
 Checkpoint files are auto-deleted on successful completion unless `keepCheckpointOnSuccess: true`.
 
+### Idempotent effects
+
+Use `loop.effect()` for external writes such as sending a message, creating a
+ticket, or charging an account. The supplied key is recorded in the checkpoint
+before the effect starts. On resume, a completed effect returns its saved result
+without calling the external service again; an interrupted one is retried with
+the same key. Pass that key to the external API's idempotency mechanism.
+
+```js
+loop.effect('create-ticket', async (ctx, key) => {
+  return jira.createIssue({ summary: ctx.vars.summary, idempotencyKey: key })
+}, {
+  key: ctx => `ticket:${ctx.vars.customerId}:${ctx.vars.requestId}`,
+  compensate: async (ticket, _ctx, key) => {
+    await jira.deleteIssue(ticket.id, { idempotencyKey: `undo:${key}` })
+  },
+})
+```
+
+Effects are durable when the run has a `checkpointFile` (including
+`runBackground()`, which creates one automatically). The completed result is
+also available as `ctx.get('create-ticket')`.
+
+Run `npm run demo:effects` for a self-contained example of resuming a completed
+effect and rolling back a failed saga.
+
+Set `compensateOnError: true` on `loop.run()` to run completed effects' optional
+`compensate` functions in reverse order after an unrecovered failure. A
+compensation is itself checkpointed before and after it runs, and receives the
+original key so downstream rollback APIs can be idempotent too.
+
 ---
 
 ### Events

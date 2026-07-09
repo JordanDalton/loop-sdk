@@ -29,7 +29,10 @@ export { codexCli, codexMcpArgs } from './codex-cli.js'
 export type { CodexCliOptions, CodexCliResult } from './codex-cli.js'
 
 export { checkpointExists, deleteCheckpoint } from './checkpoint.js'
-export type { Checkpoint } from './checkpoint.js'
+export type { Checkpoint, EffectRecord } from './checkpoint.js'
+
+export { effect } from './effect.js'
+export type { EffectFn, EffectOptions, EffectCompensation } from './effect.js'
 
 export { loadLoop, loadLoopFile, parseLoopFile, runFile, runFileBackground, resolveMode, validateOutput, MAX_SUBLOOP_DEPTH } from './loopfile.js'
 export type { LoopFileMeta, LoopFileStep, LoopFileSchema, ActionRegistry, LoadOptions, ExpectContract } from './loopfile.js'

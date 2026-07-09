@@ -11,6 +11,7 @@ import {
   codexMcpArgs,
   resolveModel, registerProvider, knownProviders, DEFAULT_PROVIDER,
   validateLoopSchema,
+  Loop, effect,
 } from '../dist/index.js'
 
 // ── Fixtures ──────────────────────────────────────────────────────────
@@ -411,6 +412,66 @@ test('run: checkpoint state round-trips step outputs', async () => {
   const { readFileSync } = await import('node:fs')
   const cp = JSON.parse(readFileSync(checkpointFile, 'utf8'))
   assert.equal(cp.state.greeting, 'hello from Austin')
+})
+
+test('effect: resumes a partially failed step without repeating a completed effect', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sdk-effect-'))
+  const checkpointFile = join(dir, 'cp.json')
+  const loop = new Loop('effects')
+  let calls = 0
+  let attempt = 0
+
+  loop.step('publish', async ctx => {
+    const result = await effect(ctx, 'send-message', async (_ctx, key) => {
+      calls++
+      return { id: 'message-1', key }
+    }, { key: 'message:request-1' })
+    assert.equal(result.id, 'message-1')
+    if (attempt++ === 0) throw new Error('crashed after send')
+  })
+
+  const first = await loop.run({ session: new NullSession('effects'), checkpointFile, keepCheckpointOnSuccess: true })
+  assert.equal(first.status, 'failed')
+  const checkpoint = JSON.parse((await import('node:fs')).readFileSync(checkpointFile, 'utf8'))
+  assert.equal(checkpoint.effects['message:request-1'].status, 'completed')
+
+  const resumed = await loop.run({
+    session: new NullSession('effects'), checkpointFile, resumeFrom: checkpointFile, keepCheckpointOnSuccess: true,
+  })
+  assert.equal(resumed.status, 'completed')
+  assert.equal(calls, 1)
+})
+
+test('effect: compensates completed effects in reverse-order failure handling', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sdk-effect-compensate-'))
+  const checkpointFile = join(dir, 'cp.json')
+  const loop = new Loop('compensate')
+  const calls = []
+
+  loop.effect('create-first', async () => {
+    calls.push('create-first')
+    return { id: 'first' }
+  }, {
+    key: 'first:1',
+    compensate: async (_result, _ctx, key) => { calls.push(`undo:${key}`) },
+  })
+  loop.effect('create-second', async () => {
+    calls.push('create-second')
+    return { id: 'second' }
+  }, {
+    key: 'second:1',
+    compensate: async (_result, _ctx, key) => { calls.push(`undo:${key}`) },
+  })
+  loop.step('fail', async () => { throw new Error('stop') })
+
+  const log = await loop.run({
+    session: new NullSession('compensate'), checkpointFile, keepCheckpointOnSuccess: true, compensateOnError: true,
+  })
+  assert.equal(log.status, 'failed')
+  assert.deepEqual(calls, ['create-first', 'create-second', 'undo:second:1', 'undo:first:1'])
+  const checkpoint = JSON.parse((await import('node:fs')).readFileSync(checkpointFile, 'utf8'))
+  assert.equal(checkpoint.effects['first:1'].compensation.status, 'completed')
+  assert.equal(checkpoint.effects['second:1'].compensation.status, 'completed')
 })
 
 // ── model registry ────────────────────────────────────────────────────

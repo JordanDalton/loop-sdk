@@ -9,6 +9,7 @@ import {
   type Checkpoint,
 } from './checkpoint.js'
 import { Emitter, type LoopEvents } from './events.js'
+import { effect, type EffectFn, type EffectOptions } from './effect.js'
 
 export type StepFn = (ctx: Context) => Promise<unknown>
 
@@ -131,6 +132,8 @@ export interface RunOptions {
    * })
    */
   onError?: (err: Error, ctx: Context, failedStep: string) => Promise<void>
+  /** Run compensators for completed Loop.effect() steps in reverse order on failure. */
+  compensateOnError?: boolean
 }
 
 export interface StepResult {
@@ -157,6 +160,7 @@ export class Loop {
   private readonly _steps: Array<{ name: string; fn: StepFn; opts: StepOptions }>
   private readonly _plugins: Plugin[]
   private readonly _emitter: Emitter
+  private readonly _effectDefinitions: Array<{ name: string; opts: EffectOptions<any> }>
   private _defaultVars: Record<string, unknown> = {}
 
   constructor(name: string) {
@@ -164,6 +168,7 @@ export class Loop {
     this._steps = []
     this._plugins = []
     this._emitter = new Emitter()
+    this._effectDefinitions = []
   }
 
   /**
@@ -179,6 +184,15 @@ export class Loop {
   step(name: string, fn: StepFn, opts: StepOptions = {}): this {
     this._steps.push({ name, fn, opts })
     return this
+  }
+
+  /**
+   * Add an idempotent side-effecting step. Its result is saved under `name` and
+   * in the checkpoint ledger, allowing resumed runs to reuse it safely.
+   */
+  effect<T>(name: string, fn: EffectFn<T>, effectOpts: EffectOptions<T>, opts: StepOptions = {}): this {
+    this._effectDefinitions.push({ name, opts: effectOpts })
+    return this.step(name, async ctx => effect(ctx, name, fn, effectOpts), opts)
   }
 
   /**
@@ -293,6 +307,7 @@ export class Loop {
     resumeFrom = null,
     keepCheckpointOnSuccess = false,
     onError,
+    compensateOnError = false,
     signal = null,
   }: RunOptions): Promise<RunLog> {
     const logger = new Logger(logDir, this.name, session.id)
@@ -315,6 +330,7 @@ export class Loop {
       for (const [k, v] of Object.entries(checkpoint.state)) ctx.set(k, v)
       ctx._completedSteps = [...checkpoint.completedSteps]
       ctx._lastCompletedIndex = checkpoint.lastCompletedIndex
+      ctx._effects = new Map(Object.entries(checkpoint.effects ?? {}))
       console.log(`\nResuming: ${this.name} (from step ${resumeIndex + 2} of ${this._steps.length})`)
       console.log(`Restored: ${Object.keys(checkpoint.state).length} state keys from ${resumeFrom}`)
       ctx.emitLine(`Resuming: ${this.name} (from step ${resumeIndex + 2} of ${this._steps.length})`)
@@ -458,14 +474,7 @@ export class Loop {
         if (checkpointFile) {
           ctx._completedSteps.push(name)
           ctx._lastCompletedIndex = i
-          writeCheckpoint(checkpointFile, {
-            loop: this.name,
-            session: session.id,
-            savedAt: new Date().toISOString(),
-            completedSteps: [...ctx._completedSteps],
-            lastCompletedIndex: i,
-            state: ctx.snapshot(),
-          })
+          writeCheckpoint(checkpointFile, ctx._checkpointData())
           const count = ctx._completedSteps.length
           console.log(`  ✓ checkpoint saved (${count}/${this._steps.length} steps) → ${checkpointFile}`)
           ctx.emitLine(`✓ checkpoint saved (${count}/${this._steps.length} steps)`)
@@ -490,6 +499,7 @@ export class Loop {
         runLog.status = 'failed'
 
         // Loop-level onError handler
+        if (compensateOnError) await this._compensateEffects(ctx)
         if (onError) {
           try { await onError(lastErr!, ctx, name) } catch {}
         }
@@ -603,6 +613,31 @@ export class Loop {
       if (recovered) return true
     }
     return false
+  }
+
+  /** Compensate completed effects in reverse declaration order. Never masks the original error. */
+  private async _compensateEffects(ctx: Context): Promise<void> {
+    for (const definition of [...this._effectDefinitions].reverse()) {
+      if (!definition.opts.compensate) continue
+      const key = typeof definition.opts.key === 'function'
+        ? definition.opts.key(ctx)
+        : definition.opts.key
+      const record = ctx._effects.get(key)
+      if (!record || record.status !== 'completed' || record.compensation?.status === 'completed') continue
+
+      record.compensation = { status: 'started', startedAt: new Date().toISOString() }
+      ctx.saveCheckpointIfConfigured()
+      try {
+        await definition.opts.compensate(record.result, ctx, key)
+        record.compensation.status = 'completed'
+        record.compensation.completedAt = new Date().toISOString()
+        ctx.saveCheckpointIfConfigured()
+        ctx.log(`effect compensated: ${definition.name}`)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        ctx.log(`effect compensation failed: ${definition.name} — ${message}`)
+      }
+    }
   }
 }
 

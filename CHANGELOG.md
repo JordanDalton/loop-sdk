@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0
+
+Durable idempotent effects and compensation sagas.
+
+### Added
+
+- **`Loop.effect()` / `effect()`** — checkpoint-backed external effects with caller-provided idempotency keys. Completed effects return their persisted result after a resume instead of calling the external service again; interrupted calls retry with the same key.
+- **`compensateOnError`** — opt-in saga rollback for completed `Loop.effect()` steps. Compensators run in reverse order and their progress is checkpointed so rollback APIs can also be idempotent.
+- **`npm run demo:effects`** — a no-credentials executable example of resume deduplication and compensation.
+
 ## 0.6.0
 
 Editor & CI tooling for `.loop` files.

@@ -1,6 +1,20 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+/** Persisted state for an idempotent side effect. */
+export interface EffectRecord {
+  name: string
+  status: 'started' | 'completed'
+  startedAt: string
+  completedAt?: string
+  result?: unknown
+  compensation?: {
+    status: 'started' | 'completed'
+    startedAt: string
+    completedAt?: string
+  }
+}
+
 export interface Checkpoint {
   loop: string
   session: string
@@ -11,6 +25,8 @@ export interface Checkpoint {
   lastCompletedIndex: number
   /** Full ctx.snapshot() at the time of the checkpoint. */
   state: Record<string, unknown>
+  /** Side effects keyed by their caller-provided idempotency key. */
+  effects?: Record<string, EffectRecord>
 }
 
 export function writeCheckpoint(file: string, data: Checkpoint): void {
