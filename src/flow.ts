@@ -1,5 +1,6 @@
 import type { Context } from './context.js'
 import type { Loop } from './loop.js'
+import { SuspendSignal } from './suspend.js'
 
 export type Item = string | { type: string; subtypes?: string[] }
 
@@ -35,7 +36,8 @@ export async function each(
     try {
       await fn(childCtx)
     } catch (err) {
-      if (!continueOnError) throw err
+      // A suspend must propagate even under continueOnError — it isn't a failure.
+      if (err instanceof SuspendSignal || !continueOnError) throw err
       const msg = err instanceof Error ? err.message : String(err)
       ctx.log(`each: "${label}" failed — ${msg}`)
     }

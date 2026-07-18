@@ -15,6 +15,17 @@ export interface EffectRecord {
   }
 }
 
+/** Persisted state for a loop.suspend() wait, keyed by its caller-provided key. */
+export interface WaitRecord {
+  /** Name of the suspend step that owns this wait. */
+  step: string
+  status: 'pending' | 'delivered'
+  startedAt: string
+  deliveredAt?: string
+  /** The value delivered via Loop.deliver() — only set once status is 'delivered'. */
+  payload?: unknown
+}
+
 export interface Checkpoint {
   loop: string
   session: string
@@ -27,6 +38,8 @@ export interface Checkpoint {
   state: Record<string, unknown>
   /** Side effects keyed by their caller-provided idempotency key. */
   effects?: Record<string, EffectRecord>
+  /** Pending/delivered loop.suspend() waits keyed by their caller-provided key. */
+  waits?: Record<string, WaitRecord>
 }
 
 export function writeCheckpoint(file: string, data: Checkpoint): void {

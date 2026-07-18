@@ -10,6 +10,7 @@ import {
 } from './checkpoint.js'
 import { Emitter, type LoopEvents } from './events.js'
 import { effect, type EffectFn, type EffectOptions } from './effect.js'
+import { waitFor, SuspendSignal, type DispatchFn, type SuspendOptions } from './suspend.js'
 
 export type StepFn = (ctx: Context) => Promise<unknown>
 
@@ -74,7 +75,7 @@ export interface Plugin {
   }
 }
 
-export type HandleStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'paused'
+export type HandleStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'paused' | 'suspended'
 
 /**
  * A handle to a loop running in the background via loop.runBackground().
@@ -91,18 +92,20 @@ export type HandleStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'p
 export interface RunHandle {
   readonly id: string
   readonly status: HandleStatus
-  /** Resolves with the RunLog on completion/cancellation. Rejects on unrecovered step failure. */
+  /** Resolves with the RunLog on completion/cancellation/suspension. Rejects on unrecovered step failure. */
   wait(): Promise<RunLog>
   /** Stop after the current step finishes. State is discarded — cannot be resumed. */
   cancel(): void
   /** Stop after the current step finishes. State is saved — resume with handle.resume(). */
   pause(): void
   /**
-   * Resume a paused loop from the last completed step.
+   * Resume a paused or suspended loop from the last completed step.
+   * Pass `delivery` to fulfill a pending loop.suspend() wait in the same call
+   * (equivalent to Loop.deliver() followed by resume()).
    * Returns a new RunHandle for the continued run.
-   * Throws if the handle is not in 'paused' state.
+   * Throws if the handle is not in 'paused' or 'suspended' state.
    */
-  resume(): RunHandle
+  resume(delivery?: { key: string; payload: unknown }): RunHandle
 }
 
 export interface RunOptions {
@@ -196,6 +199,59 @@ export class Loop {
   }
 
   /**
+   * Park the run until an external caller delivers a value for `suspendOpts.key`
+   * via Loop.deliver() (or handle.resume({ key, payload })). The run persists to
+   * checkpointFile and returns with status 'suspended' rather than blocking a
+   * process — resume it later, potentially from a different process, by calling
+   * loop.run({ resumeFrom: checkpointFile }) after delivering the key.
+   *
+   * `dispatch`, if given, fires the external async operation exactly once (it's
+   * checkpointed like Loop.effect() — a resumed run never re-dispatches). Pass
+   * `null` when the external operation was already triggered elsewhere.
+   *
+   * @example
+   * loop.suspend('browser-result', async (ctx, key) => {
+   *   await bridge.dispatch(key, ctx.vars.url)
+   * }, {
+   *   key: ctx => `task:${ctx.vars.taskId}`,
+   *   timeout: 2 * 60 * 60 * 1000,
+   * })
+   *
+   * loop.step('use-result', async (ctx) => {
+   *   const result = ctx.get('browser-result')
+   * })
+   */
+  suspend<T = unknown>(
+    name: string,
+    dispatch: DispatchFn | null,
+    suspendOpts: SuspendOptions<T>,
+    opts: StepOptions = {}
+  ): this {
+    return this.step(name, async ctx => waitFor<T>(ctx, name, dispatch, suspendOpts), opts)
+  }
+
+  /**
+   * Deliver a value for a pending loop.suspend() wait. Call this from wherever
+   * the external result arrives — a webhook handler, another process, a human
+   * approval action — then resume the run (loop.run({ resumeFrom: checkpointFile })
+   * or handle.resume()) to continue past the suspend step.
+   */
+  static deliver(checkpointFile: string, key: string, payload: unknown): void {
+    const checkpoint = readCheckpoint(checkpointFile)
+    const waits = checkpoint.waits ?? {}
+    const existing = waits[key]
+    waits[key] = {
+      step: existing?.step ?? '',
+      status: 'delivered',
+      startedAt: existing?.startedAt ?? new Date().toISOString(),
+      deliveredAt: new Date().toISOString(),
+      payload,
+    }
+    checkpoint.waits = waits
+    writeCheckpoint(checkpointFile, checkpoint)
+  }
+
+  /**
    * Add a parallel step — all named functions run concurrently.
    * The step only completes when every sub-step resolves.
    * Each sub-step's return value is stored in ctx under its name.
@@ -261,7 +317,7 @@ export class Loop {
   async runWith(ctx: Context): Promise<void> {
     const loopStartMs = Date.now()
     let stepsCompleted = 0
-    let loopStatus: 'completed' | 'failed' | 'cancelled' = 'completed'
+    let loopStatus: 'completed' | 'failed' | 'cancelled' | 'suspended' = 'completed'
     await this._emitter.emit('loop:start', {
       loop: this.name, session: ctx.session.id, totalSteps: this._steps.length,
     })
@@ -278,6 +334,13 @@ export class Loop {
           stepsCompleted++
           await this._emitter.emit('step:complete', { loop: this.name, step: name, index: i, durationMs: Date.now() - startMs })
         } catch (err) {
+          // A suspend isn't a failure — propagate it unchanged, bypassing
+          // step-error logging, plugin hooks, and 'failed' status.
+          if (err instanceof SuspendSignal) {
+            console.log('suspended')
+            loopStatus = 'suspended'
+            throw err
+          }
           const error = err instanceof Error ? err : new Error(String(err))
           console.log(`ERROR: ${error.message}`)
           ctx.emitLine(`[${i + 1}/${this._steps.length}] ${name} ... ERROR: ${error.message}`)
@@ -331,6 +394,7 @@ export class Loop {
       ctx._completedSteps = [...checkpoint.completedSteps]
       ctx._lastCompletedIndex = checkpoint.lastCompletedIndex
       ctx._effects = new Map(Object.entries(checkpoint.effects ?? {}))
+      ctx._waits = new Map(Object.entries(checkpoint.waits ?? {}))
       console.log(`\nResuming: ${this.name} (from step ${resumeIndex + 2} of ${this._steps.length})`)
       console.log(`Restored: ${Object.keys(checkpoint.state).length} state keys from ${resumeFrom}`)
       ctx.emitLine(`Resuming: ${this.name} (from step ${resumeIndex + 2} of ${this._steps.length})`)
@@ -406,6 +470,9 @@ export class Loop {
         await fn(ctx)
         stepSucceeded = true
       } catch (err) {
+        if (err instanceof SuspendSignal) {
+          return this._suspendRun(runLog, ctx, name, i, err, { checkpointFile, logger, loopStartMs, session })
+        }
         lastErr = err instanceof Error ? err : new Error(String(err))
       }
 
@@ -593,13 +660,60 @@ export class Loop {
         // The checkpoint was written after the last completed step automatically —
         // nothing extra to do here. It will exist at checkpointFile when resume() is called.
       },
-      resume: () => {
-        if (currentStatus !== 'paused') {
-          throw new Error(`Cannot resume: loop is "${currentStatus}" (must be "paused")`)
+      resume: (delivery?: { key: string; payload: unknown }) => {
+        if (currentStatus !== 'paused' && currentStatus !== 'suspended') {
+          throw new Error(`Cannot resume: loop is "${currentStatus}" (must be "paused" or "suspended")`)
         }
+        if (delivery) Loop.deliver(checkpointFile, delivery.key, delivery.payload)
         return loop.runBackground({ ...resumeOpts, resumeFrom: checkpointFile })
       },
     }
+  }
+
+  /** Park a run that hit a loop.suspend() wait with no delivered payload yet. */
+  private async _suspendRun(
+    runLog: RunLog,
+    ctx: Context,
+    stepName: string,
+    stepIndex: number,
+    signal: SuspendSignal,
+    { checkpointFile, logger, loopStartMs, session }:
+      { checkpointFile: string | null; logger: Logger; loopStartMs: number; session: Session }
+  ): Promise<RunLog> {
+    if (!checkpointFile) {
+      throw new Error(
+        `loop.suspend("${stepName}") requires checkpointFile (runBackground() sets one ` +
+        `automatically) — without it there is no way to resume an unpersisted suspend.`
+      )
+    }
+
+    console.log(`suspended (waiting on "${signal.key}")`)
+    ctx.emitLine(`[${stepIndex + 1}/${this._steps.length}] ${stepName} ... suspended (waiting on "${signal.key}")`)
+    writeCheckpoint(checkpointFile, ctx._checkpointData())
+
+    runLog.status = 'suspended'
+    runLog.finishedAt = new Date().toISOString()
+    logger.finish(runLog.status)
+
+    await this._emitter.emit('loop:suspend', {
+      loop: this.name, session: session.id, step: stepName, key: signal.key,
+    })
+    await this._emitter.emit('loop:complete', {
+      loop: this.name,
+      session: session.id,
+      status: 'suspended',
+      durationMs: Date.now() - loopStartMs,
+      stepsCompleted: runLog.steps.filter(s => s.status === 'ok' || s.status === 'recovered').length,
+    })
+
+    console.log('---')
+    console.log(`Loop ${runLog.status}.`)
+    if (logger.logFile) console.log(`Log: ${logger.logFile}`)
+    ctx.emitLine('---')
+    ctx.emitLine(`Loop ${runLog.status}.`)
+    if (logger.logFile) ctx.emitLine(`Log: ${logger.logFile}`)
+
+    return runLog
   }
 
   private async _runErrorHooks(

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.1
+
+Suspend & resume — park a run until an external event delivers a result.
+
+### Added
+
+- **`Loop.suspend()` / `waitFor()`** — a step that parks the run until an external caller delivers a value for a caller-provided key, instead of blocking a process. The optional `dispatch` fires the external async operation exactly once (checkpointed like `Loop.effect()`), so a resumed run never re-dispatches. Common uses: a long browser task handled by another machine, a webhook callback, or a human approval gate.
+- **`Loop.deliver(checkpointFile, key, payload)`** — deliver a value for a pending wait from any process. Resuming with `loop.run({ resumeFrom })` (or `handle.resume({ key, payload })`) picks the delivered payload back up at the suspended step.
+- **`'suspended'` run status** — a new terminal-but-resumable status alongside `completed`/`failed`/`cancelled`, on `RunLog.status`, `RunHandle.status`, and the `loop:suspend` / `loop:complete` events. A suspend is not a step failure — it bypasses retries, `onError`, and `skipOnError`, and propagates correctly out of `sub()`/`each()`.
+- **`timeout`** on `Loop.suspend()` — checked lazily on each resume attempt (no background timer); throws `WaitTimeoutError`, which flows through normal step failure handling.
+
 ## 0.7.0
 
 Durable idempotent effects and compensation sagas.

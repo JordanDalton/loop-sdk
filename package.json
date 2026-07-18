@@ -1,6 +1,6 @@
 {
   "name": "loop-sdk",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "type": "module",
   "description": "Loop engineering framework for building durable, long-running agentic loops — browser, AI, or both",
   "keywords": [
@@ -70,6 +70,7 @@
     "dev": "tsc --watch",
     "demo": "node examples/demo.js",
     "demo:effects": "npm run build && node examples/effects.js",
+    "demo:suspend": "npm run build && node examples/suspend.js",
     "demo:loopfile": "node examples/run-loopfile.js",
     "mcp": "node dist/mcp/server.js",
     "test": "npm run build && node --test"

@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 export type StepStatus = 'ok' | 'error' | 'running'
-export type RunStatus = 'completed' | 'failed' | 'running' | 'cancelled'
+export type RunStatus = 'completed' | 'failed' | 'running' | 'cancelled' | 'suspended'
 
 export interface StepRecord {
   name: string

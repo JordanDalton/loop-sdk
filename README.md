@@ -212,6 +212,57 @@ original key so downstream rollback APIs can be idempotent too.
 
 ---
 
+### Suspend & resume
+
+Use `loop.suspend()` for a step whose result arrives later — from a webhook, a
+browser task running on another machine, a human approval — instead of
+blocking the process to wait for it. The run parks with status `'suspended'`;
+resuming can happen from a different process entirely, any time after.
+
+```js
+loop.suspend('browser-result', async (ctx, key) => {
+  // dispatched exactly once, even across resumes — wrapped in effect() internally
+  await bridge.dispatch(key, ctx.vars.url)
+}, {
+  key: ctx => `task:${ctx.vars.taskId}`,
+  timeout: 2 * 60 * 60 * 1000,   // optional — checked on the next resume attempt
+})
+
+loop.step('use-result', async (ctx) => {
+  const result = ctx.get('browser-result')   // the delivered payload
+})
+
+await loop.run({ session, checkpointFile: '.loop/my-run.checkpoint.json' })
+// → { status: 'suspended', ... }
+```
+
+Whenever the external result shows up — in a webhook handler, a queue worker,
+anywhere — deliver it by key and resume:
+
+```js
+import { Loop } from 'loop-sdk'
+
+Loop.deliver('.loop/my-run.checkpoint.json', 'task:42', { screenshot: '...' })
+await loop.run({ session, resumeFrom: '.loop/my-run.checkpoint.json' })
+// → { status: 'completed', ... }
+```
+
+Pass `dispatch: null` when the external operation was already triggered
+elsewhere and the step only needs to wait. A `runBackground()` handle bundles
+delivery and resume into one call: `handle.resume({ key, payload })`.
+
+Run `npm run demo:suspend` for a self-contained example of dispatch-once
+suspend/resume plus the `runBackground()` delivery shortcut.
+
+A suspend is not a step failure — it bypasses `retries`, `onError`, and
+`skipOnError`, and correctly propagates out of `sub()` and `each()` so a wait
+nested inside a subloop or an item iteration still parks the whole run.
+`loop.suspend()` requires a `checkpointFile` (as does `runBackground()`, which
+sets one automatically) — without it there's nowhere to persist the wait, so
+it throws rather than suspending into nothing.
+
+---
+
 ### Events
 
 Loops emit typed events throughout their lifecycle. Listen with `loop.on()` / `loop.off()`.
@@ -231,6 +282,7 @@ loop.on('step:error',    ({ step, error, attempt }) => { })
 loop.on('step:skip',     ({ step, reason }) => { })   // reason: 'checkpoint' | 'range' | 'error'
 loop.on('step:retry',    ({ step, attempt, delay }) => { })
 loop.on('checkpoint:saved', ({ file, completedSteps }) => { })
+loop.on('loop:suspend',  ({ step, key }) => { })                  // loop.suspend() parked the run
 
 loop.on('log',   ({ message }) => { })                 // ctx.log lines, attributed per run
 loop.on('usage', ({ costUsd, inputTokens, outputTokens }) => { })  // claudeCli spend, cumulative per step
@@ -739,7 +791,7 @@ When `logDir` is passed to `loop.run()`, a JSON log is written incrementally:
 }
 ```
 
-Possible statuses: `completed`, `failed`, `running` (if the process was killed mid-run), `cancelled`.
+Possible statuses: `completed`, `failed`, `running` (if the process was killed mid-run), `cancelled`, `suspended` (parked on a `loop.suspend()` wait — resumable).
 
 ---
 

@@ -38,9 +38,17 @@ export interface LoopStartEvent {
 export interface LoopCompleteEvent {
   loop: string
   session: string
-  status: 'completed' | 'failed' | 'cancelled'
+  status: 'completed' | 'failed' | 'cancelled' | 'suspended'
   durationMs: number
   stepsCompleted: number
+}
+
+/** A loop.suspend() step parked the run — it's waiting on Loop.deliver(key). */
+export interface LoopSuspendEvent {
+  loop: string
+  session: string
+  step: string
+  key: string
 }
 
 export interface StepStartEvent {
@@ -138,6 +146,7 @@ export interface LoopEvents {
   'step:skip':           StepSkipEvent
   'step:retry':          StepRetryEvent
   'checkpoint:saved':    CheckpointSavedEvent
+  'loop:suspend':        LoopSuspendEvent
   'log':                 LogEvent
   'usage':               UsageEvent
   'agent':               AgentActivityEvent

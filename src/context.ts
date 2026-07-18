@@ -1,7 +1,7 @@
 import type { Session, ClickOptions, ScrollOptions } from './session.js'
 import type { Logger } from './logger.js'
 import type { Emitter } from './events.js'
-import { writeCheckpoint, type Checkpoint, type EffectRecord } from './checkpoint.js'
+import { writeCheckpoint, type Checkpoint, type EffectRecord, type WaitRecord } from './checkpoint.js'
 
 export interface ContextOptions {
   session: Session
@@ -12,6 +12,7 @@ export interface ContextOptions {
   emitter?: Emitter | null
   signal?: AbortSignal | null
   effects?: Map<string, EffectRecord>
+  waits?: Map<string, WaitRecord>
 }
 
 export class Context {
@@ -29,6 +30,8 @@ export class Context {
   _lastCompletedIndex: number = -1
   /** Internal effect ledger, shared by forked contexts and persisted in checkpoints. */
   _effects: Map<string, EffectRecord>
+  /** Internal loop.suspend() wait ledger, shared by forked contexts and persisted in checkpoints. */
+  _waits: Map<string, WaitRecord>
 
   /** Nesting depth and the chain of subloop files entered — used to detect
    * runaway recursion and circular `loop:` references. Propagated through fork(). */
@@ -44,6 +47,7 @@ export class Context {
     emitter = null,
     signal = null,
     effects = new Map(),
+    waits = new Map(),
   }: ContextOptions) {
     this.session = session
     this.vars = vars
@@ -53,6 +57,7 @@ export class Context {
     this._emitter = emitter
     this.signal = signal
     this._effects = effects
+    this._waits = waits
   }
 
   // ── state ────────────────────────────────────────────────────────────────────
@@ -118,6 +123,7 @@ export class Context {
       lastCompletedIndex: this._lastCompletedIndex,
       state: this.snapshot(),
       effects: Object.fromEntries(this._effects),
+      waits: Object.fromEntries(this._waits),
     }
   }
 
@@ -158,6 +164,7 @@ export class Context {
       emitter: this._emitter,
       signal: this.signal,
       effects: this._effects,
+      waits: this._waits,
     })
     // Carry nesting bookkeeping forward so subloop/each guards see the ancestry.
     child._loopDepth = this._loopDepth
